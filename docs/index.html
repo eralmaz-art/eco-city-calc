@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Калькулятор рассрочки — Эко Сити Айни</title>
+<meta name="theme-color" content="#1d6b4f">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<!-- Калькулятор рассрочки — ЖК «Эко Сити Айни». ОФЛАЙН-ВЕРСИЯ (PWA).
+     Полная копия расчёта и дизайна основной версии, но:
+       — без google.script.run и любых сетевых вызовов;
+       — справочник квартир вшит отдельным файлом apartments.js (без цен, статусов и брони);
+       — этап «Зафиксировать» отсутствует: запись графика возможна только в основной системе. -->
+<style>
+  :root {
+    --bg: #f2f5f2;
+    --card: #ffffff;
+    --ink: #16281e;
+    --muted: #66756c;
+    --line: #e0e6e1;
+    --accent: #1d6b4f;        /* фирменный зелёный */
+    --accent-soft: #e7f1ec;
+    --gold: #d9a441;          /* акцент */
+    --danger: #c0392b;
+    --warn-bg: #fdf3e3;
+    --warn-ink: #8a6117;
+    --err-bg: #fdecea;
+    --seg-down: #1d6b4f;      /* взнос */
+    --seg-agreed: #d9a441;    /* договорённые */
+    --seg-equal: #7fb69a;     /* равные */
+    --seg-tail: #b0563f;      /* хвост / финальный */
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--bg); color: var(--ink); }
+  body {
+    font: 15px/1.45 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    padding: 16px;
+  }
+
+  /* ---------- каркас ---------- */
+  header.topbar {
+    max-width: 1180px; margin: 0 auto 14px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  }
+  .brand { font-size: 19px; font-weight: 700; letter-spacing: .2px; }
+  .brand small { color: var(--muted); font-weight: 500; }
+  .badge {
+    background: var(--gold); color: #3d2c07; font-weight: 700; font-size: 12px;
+    padding: 4px 10px; border-radius: 999px; letter-spacing: .3px;
+  }
+  main.app {
+    max-width: 1180px; margin: 0 auto;
+    display: grid; grid-template-columns: 430px 1fr; gap: 14px; align-items: start;
+  }
+  @media (max-width: 980px) { main.app { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(20,40,30,.04);
+  }
+  .card h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--muted); margin-bottom: 12px; font-weight: 700;
+  }
+  .card.error-frame { border: 2px solid var(--danger); }
+
+  /* ---------- поля ---------- */
+  label.fld { display: block; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  label.fld b { display: block; margin-bottom: 4px; font-weight: 600; color: var(--ink); }
+  input[type="number"], input[type="date"], input[type="text"] {
+    width: 100%; padding: 9px 11px; font-size: 16px; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 9px; background: #fff;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .row-disc { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
+
+  .toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .toggle button {
+    border: 0; background: #fff; padding: 9px 14px; font-size: 15px; cursor: pointer; color: var(--muted);
+  }
+  .toggle button.on { background: var(--accent); color: #fff; font-weight: 700; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chips button {
+    border: 1px solid var(--line); background: #fff; border-radius: 999px;
+    padding: 5px 12px; font-size: 13px; cursor: pointer; color: var(--ink);
+  }
+  .chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 5px; }
+
+  /* цена: до/после скидки */
+  .price-view { margin-top: 4px; font-size: 15px; }
+  .price-view .old { text-decoration: line-through; color: var(--muted); }
+  .price-view .new { font-size: 21px; font-weight: 800; color: var(--accent); }
+  .price-view .save { color: var(--gold); font-weight: 700; }
+
+  /* срок */
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .term-line { display: flex; justify-content: space-between; align-items: baseline; }
+  .term-val { font-size: 22px; font-weight: 800; color: var(--accent); }
+  .term-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+
+  /* договорённые платежи */
+  .agreed-row { display: grid; grid-template-columns: 1fr 1fr 34px; gap: 8px; margin-bottom: 8px; }
+  .agreed-row button {
+    border: 1px solid var(--line); background: #fff; border-radius: 9px; cursor: pointer;
+    color: var(--danger); font-size: 16px;
+  }
+  .btn {
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    border-radius: 9px; padding: 9px 16px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .btn.ghost { background: #fff; color: var(--accent); }
+  .btn:disabled { background: #cfd8d2; border-color: #cfd8d2; color: #fff; cursor: not-allowed; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; margin-top: 10px; }
+  .seg button { flex: 1; border: 0; background: #fff; padding: 9px 6px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+
+  /* режим «По квартире» */
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1.6fr; gap: 8px; }
+  select {
+    width: 100%; padding: 9px 8px; font-size: 15px; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 9px; background: #fff;
+  }
+  select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  input[readonly] { background: #eef1ee; color: var(--muted); }
+  .stamp { font-size: 12px; color: var(--muted); }
+
+  /* ---------- итог ---------- */
+  .big-pay { text-align: center; padding: 6px 0 10px; }
+  .big-pay .lbl { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
+  .big-pay .val { font-size: 44px; font-weight: 800; color: var(--accent); line-height: 1.15; }
+  .big-pay .sub { font-size: 14px; color: var(--muted); }
+  .control-line {
+    background: var(--accent-soft); border-radius: 9px; padding: 9px 12px;
+    font-size: 13.5px; text-align: center; margin-top: 6px;
+  }
+  .control-line .ok { color: var(--accent); font-weight: 700; }
+
+  .bar { display: flex; height: 26px; border-radius: 7px; overflow: hidden; margin-top: 12px; }
+  .bar div { min-width: 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+  .alerts { margin-top: 12px; display: grid; gap: 6px; }
+  .alert { border-radius: 9px; padding: 8px 12px; font-size: 13.5px; }
+  .alert.warn { background: var(--warn-bg); color: var(--warn-ink); }
+  .alert.err  { background: var(--err-bg); color: var(--danger); font-weight: 600; }
+
+  /* график */
+  details.sched summary { cursor: pointer; font-weight: 600; color: var(--accent); font-size: 14px; }
+  table.sched-t { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13.5px; }
+  table.sched-t th { text-align: left; color: var(--muted); font-size: 11.5px; text-transform: uppercase;
+                     letter-spacing: .5px; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  table.sched-t td { padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.sched-t td.num, table.sched-t th.num { text-align: right; }
+  .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; color: #fff; white-space: nowrap; }
+  .tag.down   { background: var(--seg-down); }
+  .tag.agreed { background: var(--seg-agreed); color: #3d2c07; }
+  .tag.equal  { background: var(--seg-equal); color: #123527; }
+  .tag.tail   { background: var(--seg-tail); }
+
+  /* варианты сравнения */
+  .vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+  .var-card { border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; position: relative; }
+  .var-card .t { font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+  .var-card .m { font-size: 12.5px; color: var(--muted); }
+  .var-card .p { font-size: 18px; font-weight: 800; }
+  .var-card .x { position: absolute; top: 6px; right: 8px; border: 0; background: none;
+                 color: var(--muted); cursor: pointer; font-size: 15px; }
+
+  .kp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+  /* ---------- КП (печать) ---------- */
+  #kp { display: none; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    header.topbar, main.app { display: none !important; }
+    #kp { display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+  @page { size: A4; margin: 12mm; }
+
+  #kp { color: var(--ink); font-size: 13px; }
+  .kp-head { display: flex; justify-content: space-between; align-items: flex-start;
+             border-bottom: 3px solid var(--accent); padding-bottom: 10px; margin-bottom: 12px; }
+  .kp-head .zh { font-size: 21px; font-weight: 800; color: var(--accent); }
+  .kp-head .doc { color: var(--muted); }
+  .kp-mark { background: var(--gold); color: #3d2c07; font-weight: 800; font-size: 12px;
+             padding: 5px 12px; border-radius: 999px; white-space: nowrap; }
+  .kp-obj { margin-bottom: 12px; }
+  .kp-obj .old { text-decoration: line-through; color: var(--muted); }
+  .kp-obj .new { font-size: 22px; font-weight: 800; color: var(--accent); }
+  .kp-obj .save { color: var(--gold); font-weight: 800; }
+  .kp-avail { background: var(--warn-bg); color: var(--warn-ink); font-weight: 700;
+              border-radius: 9px; padding: 7px 12px; margin-bottom: 12px; font-size: 12.5px; }
+  table.kp-cmp { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+  table.kp-cmp th, table.kp-cmp td { border: 1px solid var(--line); padding: 6px 9px; text-align: right; }
+  table.kp-cmp th:first-child, table.kp-cmp td:first-child { text-align: left; color: var(--muted); }
+  table.kp-cmp th { background: var(--accent-soft); color: var(--ink); }
+  .kp-var { break-inside: avoid; border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .kp-var-title { font-weight: 800; color: var(--accent); margin-bottom: 8px; font-size: 14px; }
+  .kp-figs { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 8px; }
+  .kp-figs .f b { display: block; font-size: 16px; }
+  .kp-figs .f span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .kp-foot { display: flex; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line);
+             padding-top: 10px; margin-top: 6px; font-size: 12.5px; }
+  .kp-valid { font-weight: 800; color: var(--danger); }
+  .kp-note { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
+
+  /* телефонная вёрстка КП: одна колонка, крупные цифры */
+  body.print-phone #kp { max-width: 118mm; margin: 0 auto; font-size: 15px; }
+  body.print-phone .kp-head { flex-direction: column; gap: 6px; }
+  body.print-phone .kp-figs .f b { font-size: 21px; }
+  body.print-phone table.kp-cmp { display: none; }
+  body.print-phone .big-digit { font-size: 30px !important; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">ЖК «Эко Сити Айни» <small>· Калькулятор рассрочки · офлайн</small></div>
+  <div class="toggle">
+    <button type="button" id="mEstimate" class="on">Прикидка</button>
+    <button type="button" id="mUnit">По квартире</button>
+  </div>
+  <span class="badge" id="modeBadge">Режим «Прикидка» — предварительный расчёт</span>
+</header>
+
+<main class="app">
+  <!-- ================= ЛЕВАЯ КОЛОНКА: ВВОД ================= -->
+  <section>
+    <div class="card" id="unitCard" style="display:none">
+      <h2>Квартира — по вшитому справочнику</h2>
+      <div class="row3">
+        <label class="fld"><b>Подъезд</b><select id="selEntrance"></select></label>
+        <label class="fld"><b>Этаж</b><select id="selFloor"></select></label>
+        <label class="fld"><b>Квартира</b><select id="selUnit"></select></label>
+      </div>
+      <div class="hint" id="unitInfo"></div>
+      <div class="alert warn" style="margin-top:10px">⚠ Наличие и статус квартиры уточните по основной системе — расчёт не является бронью.</div>
+      <div style="margin-top:8px"><span class="stamp" id="dataStamp"></span></div>
+    </div>
+
+    <div class="card">
+      <h2>Объект и цена</h2>
+      <div class="row2">
+        <label class="fld"><b>Площадь, м²</b>
+          <input type="number" id="area" min="0" step="0.01" value="65">
+        </label>
+        <label class="fld"><b>Цена м², $</b>
+          <input type="number" id="price" min="0" step="1" value="1500">
+        </label>
+      </div>
+      <div class="row-disc">
+        <label class="fld" style="margin-bottom:0"><b>Скидка</b>
+          <input type="number" id="discount" min="0" step="0.01" value="0">
+        </label>
+        <div class="toggle">
+          <button type="button" id="discPct" class="on">%</button>
+          <button type="button" id="discUsd">$</button>
+        </div>
+      </div>
+      <div class="price-view" id="priceView"></div>
+    </div>
+
+    <div class="card">
+      <h2>Первый взнос и срок</h2>
+      <label class="fld"><b>Первый взнос, $</b>
+        <input type="number" id="down" min="0" step="1" value="0">
+      </label>
+      <div class="chips" id="downChips"></div>
+      <div class="hint" id="downPctView"></div>
+
+      <div style="margin-top:16px">
+        <div class="term-line"><b>Срок рассрочки</b><span class="term-val" id="termVal">18 мес</span></div>
+        <input type="range" id="term" min="3" max="36" step="1" value="18">
+        <div class="term-scale"><span>3</span><span>12</span><span>24</span><span>36</span></div>
+      </div>
+
+      <div class="row2" style="margin-top:12px">
+        <label class="fld"><b>Дата 1-го платежа</b>
+          <input type="date" id="firstDate">
+        </label>
+        <label class="fld"><b>Число месяца</b>
+          <input type="number" id="payDay" min="1" max="31" step="1">
+        </label>
+      </div>
+      <div class="hint">Равные платежи идут этим числом каждого месяца.</div>
+    </div>
+
+    <div class="card" id="agreedCard">
+      <h2>Платежи по договорённости</h2>
+      <div id="agreedRows"></div>
+      <button type="button" class="btn ghost" id="addAgreed">＋ Добавить платёж</button>
+      <div class="seg">
+        <button type="button" id="modeEqual" class="on">Остаток — равными долями</button>
+        <button type="button" id="modeTail">Остаток — хвостом в конце</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ПРАВАЯ КОЛОНКА: РЕЗУЛЬТАТ ================= -->
+  <section>
+    <div class="card">
+      <div class="big-pay">
+        <div class="lbl" id="bigLbl">Ежемесячный платёж</div>
+        <div class="val" id="bigVal">—</div>
+        <div class="sub" id="bigSub"></div>
+      </div>
+      <div class="control-line" id="controlLine"></div>
+      <div class="bar" id="bar"></div>
+      <div class="legend" id="legend"></div>
+      <div class="alerts" id="alerts"></div>
+    </div>
+
+    <div class="card">
+      <details class="sched" open>
+        <summary id="schedSummary">График платежей</summary>
+        <table class="sched-t">
+          <thead><tr><th>№</th><th>Дата</th><th>Тип</th><th class="num">Сумма</th><th class="num">Остаток</th></tr></thead>
+          <tbody id="schedBody"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>Сравнение вариантов</h2>
+      <button type="button" class="btn" id="pinBtn">Закрепить вариант</button>
+      <span class="hint" id="pinHint">До 3 вариантов — например, 12 / 18 / 24 мес.</span>
+      <div class="vars" id="varsBox"></div>
+    </div>
+
+    <div class="card">
+      <h2>Коммерческое предложение</h2>
+      <div class="row2">
+        <label class="fld"><b>Менеджер</b>
+          <input type="text" id="mgrName" list="mgrList" placeholder="Фамилия Имя">
+          <datalist id="mgrList"></datalist>
+        </label>
+        <label class="fld"><b>Телефон / WhatsApp</b>
+          <input type="text" id="mgrPhone" placeholder="+996 ...">
+        </label>
+      </div>
+      <label class="fld" style="max-width:220px"><b>Расчёт действителен до</b>
+        <input type="date" id="validUntil">
+      </label>
+      <div class="kp-actions">
+        <button type="button" class="btn" id="printA4">Печать / PDF — А4</button>
+        <button type="button" class="btn ghost" id="printPhone">PDF для WhatsApp — телефон</button>
+      </div>
+      <div class="hint">Офлайн-версия: фиксация графика и бронь выполняются только в основной системе.</div>
+    </div>
+  </section>
+</main>
+
+<!-- КП — рендерится перед печатью, виден только в @media print -->
+<div id="kp"></div>
+
+<script src="apartments.js"></script>
+<script>
+'use strict';
+
+/* Данные из apartments.js; если файл не подключился — калькулятор работает в «Прикидке». */
+var APT = (typeof window.APT_DATA === 'object' && window.APT_DATA) || null;
+
+var TAIL_LIMIT_DEFAULT = 30;
+var DOWN_CHIP_PCTS = [30, 40, 50, 60, 70];
+var MAX_PINNED = 3;
+
+var $ = function (id) { return document.getElementById(id); };
+
+var discountType = 'pct';   // 'pct' | 'usd'
+var restMode = 'equal';     // 'equal' | 'tail'
+var pinned = [];
+
+var appMode = 'estimate';   // 'estimate' («Прикидка») | 'unit' («По квартире»)
+var selectedUnit = null;
+
+function tailLimitPct() {
+  return APT && APT.params && APT.params.tailLimitPct > 0
+      ? APT.params.tailLimitPct : TAIL_LIMIT_DEFAULT;
+}
+function basePrice() {
+  return APT && APT.params && APT.params.basePrice > 0 ? APT.params.basePrice : 1500;
+}
+
+/* ---------- форматирование ---------- */
+function fmtMoney(n) { return new Intl.NumberFormat('ru-RU').format(Math.round(n)) + ' $'; }
+function fmtPct(n)   { return (Math.round(n * 10) / 10).toLocaleString('ru-RU') + '%'; }
+function fmtDate(d) {
+  return ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + d.getFullYear();
+}
+function dateToInput(d) {
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+function parseDateInput(v) {
+  if (!v) return null;
+  var p = v.split('-');
+  return new Date(+p[0], +p[1] - 1, +p[2]);
+}
+function today0() { var d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+
+/* i-я дата графика: первая — как выбрана, дальше — «число месяца» с поджатием к концу месяца */
+function slotDate(first, i, payDay) {
+  if (i === 0) return new Date(first.getFullYear(), first.getMonth(), first.getDate());
+  var y = first.getFullYear(), m = first.getMonth() + i;
+  var dim = new Date(y, m + 1, 0).getDate();
+  return new Date(y, m, Math.min(payDay, dim));
+}
+
+/* ---------- договорённые платежи (строки) ---------- */
+function addAgreedRow(dateVal, sumVal) {
+  var row = document.createElement('div');
+  row.className = 'agreed-row';
+  row.innerHTML =
+    '<input type="date" class="ag-date">' +
+    '<input type="number" class="ag-sum" min="0" step="1" placeholder="Сумма, $">' +
+    '<button type="button" title="Удалить">✕</button>';
+  if (dateVal) row.querySelector('.ag-date').value = dateVal;
+  if (sumVal) row.querySelector('.ag-sum').value = sumVal;
+  row.querySelector('button').onclick = function () { row.remove(); recalc(); };
+  row.querySelector('.ag-date').oninput = recalc;
+  row.querySelector('.ag-sum').oninput = recalc;
+  $('agreedRows').appendChild(row);
+}
+function readAgreed() {
+  var out = [];
+  var rows = document.querySelectorAll('#agreedRows .agreed-row');
+  for (var i = 0; i < rows.length; i++) {
+    var d = parseDateInput(rows[i].querySelector('.ag-date').value);
+    var s = Math.round(+rows[i].querySelector('.ag-sum').value || 0);
+    if (d && s > 0) out.push({ date: d, sum: s });
+  }
+  out.sort(function (a, b) { return a.date - b.date; });
+  return out;
+}
+
+/* ---------- расчёт ---------- */
+function compute() {
+  var area = +$('area').value || 0;
+  var price = +$('price').value || 0;
+  var discVal = +$('discount').value || 0;
+
+  var base = Math.round(area * price);
+  var discount = discountType === 'pct' ? Math.round(base * discVal / 100) : Math.round(discVal);
+  discount = Math.min(Math.max(discount, 0), base);
+  var total = base - discount;
+
+  var downRaw = Math.round(+$('down').value || 0);
+  var down = Math.min(Math.max(downRaw, 0), total);
+  var downClamped = downRaw > total && total > 0;
+
+  var months = +$('term').value;
+  var first = parseDateInput($('firstDate').value) || slotDate(today0(), 1, today0().getDate());
+  var payDay = Math.min(Math.max(Math.round(+$('payDay').value || first.getDate()), 1), 31);
+
+  var slots = [];
+  for (var i = 0; i < months; i++) slots.push(slotDate(first, i, payDay));
+  var lastDate = slots[months - 1];
+
+  var agreed = readAgreed();
+  var agreedSum = agreed.reduce(function (s, a) { return s + a.sum; }, 0);
+  var remainder = total - down - agreedSum;
+  var overflow = remainder < 0 ? -remainder : 0;
+
+  var badDates = agreed.filter(function (a) { return a.date < today0() || a.date > lastDate; });
+
+  /* занятые месяцы: в месяце есть договорённый платёж */
+  var occupied = slots.map(function (d) {
+    return agreed.some(function (a) {
+      return a.date.getFullYear() === d.getFullYear() && a.date.getMonth() === d.getMonth();
+    });
+  });
+  var freeCount = occupied.filter(function (o) { return !o; }).length;
+
+  var regular = slots.map(function () { return 0; });
+  var tail = 0, monthly = 0, lastEqual = 0, equalCount = 0, allBusy = false;
+
+  if (remainder > 0) {
+    if (restMode === 'equal' && freeCount > 0) {
+      monthly = Math.round(remainder / freeCount);
+      var assigned = 0, lastIdx = -1;
+      for (var j = 0; j < months; j++) {
+        if (!occupied[j]) { regular[j] = monthly; assigned += monthly; lastIdx = j; }
+      }
+      regular[lastIdx] += remainder - assigned;  /* сведение до доллара */
+      lastEqual = regular[lastIdx];
+      equalCount = freeCount;
+    } else {
+      tail = remainder;                          /* режим «хвост» или все месяцы заняты */
+      allBusy = restMode === 'equal' && freeCount === 0;
+    }
+  }
+  var tailPct = total > 0 ? tail / total * 100 : 0;
+
+  /* график */
+  var rows = [];
+  if (down > 0) rows.push({ date: today0(), type: 'Первоначальный взнос', cls: 'down', sum: down });
+  agreed.forEach(function (a) { rows.push({ date: a.date, type: 'Договорённый', cls: 'agreed', sum: a.sum }); });
+  slots.forEach(function (d, k) {
+    if (regular[k] > 0) rows.push({ date: d, type: 'Ежемесячный', cls: 'equal', sum: regular[k] });
+  });
+  if (tail > 0) rows.push({ date: lastDate, type: 'Финальный', cls: 'tail', sum: tail });
+  rows.sort(function (a, b) { return a.date - b.date; });
+  var rest = total;
+  rows.forEach(function (r, k) { rest -= r.sum; r.rest = rest; r.n = k + 1; });
+
+  var regularSum = regular.reduce(function (s, v) { return s + v; }, 0);
+
+  return {
+    valid: area > 0 && price > 0,
+    area: area, price: price, base: base, discount: discount, total: total,
+    down: down, downPct: total > 0 ? down / total * 100 : 0, downClamped: downClamped,
+    months: months, firstDate: first, lastDate: lastDate, payDay: payDay,
+    agreed: agreed, agreedSum: agreedSum, badDates: badDates,
+    restMode: restMode, monthly: monthly, lastEqual: lastEqual, equalCount: equalCount,
+    regularSum: regularSum, tail: tail, tailPct: tailPct,
+    overflow: overflow, allBusy: allBusy, rows: rows,
+    unit: appMode === 'unit' && selectedUnit ? selectedUnit : null
+  };
+}
+
+/* ---------- отрисовка ---------- */
+function segColor(key) {
+  return getComputedStyle(document.documentElement).getPropertyValue('--seg-' + key).trim();
+}
+function segments(c) {
+  return [
+    { key: 'down',   label: 'Взнос',        v: c.down },
+    { key: 'agreed', label: 'Договорённые', v: c.agreedSum },
+    { key: 'equal',  label: 'Равные',       v: c.regularSum },
+    { key: 'tail',   label: 'Финальный',    v: c.tail }
+  ].filter(function (s) { return s.v > 0; });
+}
+function barHtml(c, height) {
+  var segs = segments(c);
+  if (!segs.length || c.total <= 0) return '';
+  var h = '<div class="bar" style="height:' + (height || 26) + 'px">';
+  segs.forEach(function (s) {
+    h += '<div style="background:' + segColor(s.key) + ';width:' + (s.v / c.total * 100) + '%"></div>';
+  });
+  return h + '</div>';
+}
+function legendHtml(c) {
+  return segments(c).map(function (s) {
+    return '<span><span class="dot" style="background:' + segColor(s.key) + '"></span>' +
+      s.label + ': ' + fmtMoney(s.v) + ' (' + fmtPct(s.v / c.total * 100) + ')</span>';
+  }).join('');
+}
+function controlHtml(c) {
+  var parts = [fmtMoney(c.down) + ' взнос'];
+  if (c.agreedSum > 0) parts.push(fmtMoney(c.agreedSum) + ' договорённые');
+  if (c.equalCount > 0) {
+    if (c.lastEqual === c.monthly) {
+      parts.push(c.equalCount + ' × ' + fmtMoney(c.monthly));
+    } else {
+      parts.push((c.equalCount - 1) + ' × ' + fmtMoney(c.monthly) + ' + ' + fmtMoney(c.lastEqual) + ' (посл.)');
+    }
+  }
+  if (c.tail > 0) parts.push(fmtMoney(c.tail) + ' финальный');
+  var ok = c.overflow === 0;
+  return fmtMoney(c.total) + ' = ' + parts.join(' + ') +
+    (ok ? ' <span class="ok">✓ сходится</span>' : '');
+}
+function schedRowsHtml(c) {
+  return c.rows.map(function (r) {
+    return '<tr><td>' + r.n + '</td><td>' + fmtDate(r.date) + '</td>' +
+      '<td><span class="tag ' + r.cls + '">' + r.type + '</span></td>' +
+      '<td class="num">' + fmtMoney(r.sum) + '</td><td class="num">' + fmtMoney(r.rest) + '</td></tr>';
+  }).join('');
+}
+
+function render() {
+  var c = compute();
+
+  /* цена до/после скидки */
+  if (!c.valid) {
+    $('priceView').innerHTML = '<span class="hint">' + (appMode !== 'unit'
+        ? 'Введите площадь и цену м².'
+        : selectedUnit
+          ? 'Введите цену м².'
+          : 'Выберите квартиру: подъезд → этаж → №.') + '</span>';
+  } else if (c.discount > 0) {
+    $('priceView').innerHTML =
+      '<span class="old">' + fmtMoney(c.base) + '</span> → <span class="new">' + fmtMoney(c.total) + '</span>' +
+      '<br><span class="save">Выгода: ' + fmtMoney(c.discount) + '</span>';
+  } else {
+    $('priceView').innerHTML = 'Стоимость: <span class="new">' + fmtMoney(c.total) + '</span>';
+  }
+
+  /* чипы взноса */
+  var chipsBox = $('downChips');
+  chipsBox.innerHTML = '';
+  DOWN_CHIP_PCTS.forEach(function (p) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = p + '%';
+    if (c.total > 0 && c.down === Math.round(c.total * p / 100)) b.className = 'on';
+    b.onclick = function () {
+      var cc = compute();
+      $('down').value = Math.round(cc.total * p / 100);
+      recalc();
+    };
+    chipsBox.appendChild(b);
+  });
+  $('downPctView').textContent = c.total > 0 ? 'Взнос: ' + fmtPct(c.downPct) + ' от стоимости' : '';
+
+  $('termVal').textContent = c.months + ' мес';
+
+  /* главная цифра */
+  if (!c.valid) {
+    $('bigLbl').textContent = 'Ежемесячный платёж';
+    $('bigVal').textContent = '—';
+    $('bigSub').textContent = '';
+  } else if (c.equalCount > 0) {
+    $('bigLbl').textContent = 'Ежемесячный платёж';
+    $('bigVal').textContent = fmtMoney(c.monthly);
+    $('bigSub').textContent = c.equalCount + ' платеж(ей), с ' + fmtDate(c.firstDate) + ' по ' + fmtDate(c.lastDate) +
+      (c.lastEqual !== c.monthly ? ' · последний: ' + fmtMoney(c.lastEqual) : '');
+  } else if (c.tail > 0) {
+    $('bigLbl').textContent = 'Финальный платёж';
+    $('bigVal').textContent = fmtMoney(c.tail);
+    $('bigSub').textContent = 'Ежемесячные — 0 $ · финальный платёж ' + fmtDate(c.lastDate);
+  } else {
+    $('bigLbl').textContent = 'Ежемесячный платёж';
+    $('bigVal').textContent = fmtMoney(0);
+    $('bigSub').textContent = c.overflow > 0 ? '' : 'Стоимость закрыта взносом и договорённостями';
+  }
+
+  $('controlLine').innerHTML = c.valid ? controlHtml(c) : '';
+  var barEl = $('bar');
+  var segs = c.valid && c.total > 0 ? segments(c) : [];
+  barEl.style.display = segs.length ? '' : 'none';
+  barEl.innerHTML = segs.map(function (s) {
+    return '<div style="background:' + segColor(s.key) + ';width:' + (s.v / c.total * 100) + '%"></div>';
+  }).join('');
+  $('legend').innerHTML = c.valid ? legendHtml(c) : '';
+
+  /* предупреждения */
+  var alerts = [];
+  if (c.overflow > 0) alerts.push({ cls: 'err', t: 'Договорённые платежи превышают остаток на ' + fmtMoney(c.overflow) + '. Уменьшите суммы.' });
+  if (c.downClamped) alerts.push({ cls: 'warn', t: 'Первый взнос не может быть больше стоимости — ограничен суммой ' + fmtMoney(c.total) + '.' });
+  if (c.tail > 0 && c.tailPct > tailLimitPct()) alerts.push({ cls: 'warn', t: 'Финальный платёж ' + fmtPct(c.tailPct) + ' от стоимости — выше порога ' + tailLimitPct() + '%.' });
+  if (c.allBusy) alerts.push({ cls: 'warn', t: 'Во всех месяцах срока есть договорённые платежи — остаток показан финальным платежом.' });
+  c.badDates.forEach(function (a) {
+    alerts.push({ cls: 'warn', t: 'Договорённый платёж ' + fmtDate(a.date) + ' — вне срока рассрочки (допустимо: с ' + fmtDate(today0()) + ' по ' + fmtDate(c.lastDate) + ').' });
+  });
+  $('alerts').innerHTML = alerts.map(function (a) { return '<div class="alert ' + a.cls + '">' + a.t + '</div>'; }).join('');
+  $('agreedCard').classList.toggle('error-frame', c.overflow > 0);
+
+  /* график */
+  $('schedSummary').textContent = 'График платежей (' + c.rows.length + ')';
+  $('schedBody').innerHTML = c.valid ? schedRowsHtml(c) : '';
+
+  renderPinned();
+}
+
+function recalc() { render(); }
+
+/* ---------- варианты сравнения ---------- */
+function renderPinned() {
+  var box = $('varsBox');
+  box.innerHTML = '';
+  pinned.forEach(function (v, i) {
+    var d = document.createElement('div');
+    d.className = 'var-card';
+    var payLine = v.equalCount > 0
+      ? '<div class="p">' + fmtMoney(v.monthly) + '</div><div class="m">в месяц</div>'
+      : '<div class="p">' + fmtMoney(v.tail) + '</div><div class="m">финальный</div>';
+    d.innerHTML =
+      '<button type="button" class="x" title="Убрать">✕</button>' +
+      '<div class="t">' + v.months + ' мес</div>' + payLine +
+      '<div class="m">Взнос: ' + fmtMoney(v.down) + ' (' + fmtPct(v.downPct) + ')</div>' +
+      '<div class="m">Стоимость: ' + fmtMoney(v.total) + '</div>';
+    d.querySelector('.x').onclick = function () { pinned.splice(i, 1); renderPinned(); };
+    box.appendChild(d);
+  });
+  $('pinBtn').disabled = pinned.length >= MAX_PINNED;
+  $('pinHint').textContent = pinned.length >= MAX_PINNED
+    ? 'Максимум ' + MAX_PINNED + ' варианта — удалите один, чтобы закрепить новый.'
+    : 'До ' + MAX_PINNED + ' вариантов — например, 12 / 18 / 24 мес.';
+}
+
+/* ---------- КП ---------- */
+function kpVariantHtml(v, idx) {
+  var modeText = v.equalCount > 0 ? 'равными долями' : 'с финальным платежом';
+  var figs =
+    '<div class="f"><b>' + fmtMoney(v.total) + '</b><span>Стоимость</span></div>' +
+    '<div class="f"><b>' + fmtMoney(v.down) + '</b><span>Взнос (' + fmtPct(v.downPct) + ')</span></div>' +
+    '<div class="f"><b>' + v.months + ' мес</b><span>Срок</span></div>' +
+    (v.equalCount > 0
+      ? '<div class="f"><b class="big-digit">' + fmtMoney(v.monthly) + '</b><span>В месяц</span></div>'
+      : '') +
+    (v.tail > 0
+      ? '<div class="f"><b class="big-digit">' + fmtMoney(v.tail) + '</b><span>Финальный</span></div>'
+      : '');
+  return '<div class="kp-var">' +
+    '<div class="kp-var-title">Вариант ' + (idx + 1) + ' · ' + v.months + ' мес — ' + modeText + '</div>' +
+    '<div class="kp-figs">' + figs + '</div>' +
+    barHtml(v, 16) +
+    '<table class="sched-t"><thead><tr><th>№</th><th>Дата</th><th>Тип</th><th class="num">Сумма</th><th class="num">Остаток</th></tr></thead>' +
+    '<tbody>' + schedRowsHtml(v) + '</tbody></table>' +
+    '</div>';
+}
+function buildKP() {
+  var cur = compute();
+  var variants = pinned.length ? pinned : [cur];
+  var mgr = ($('mgrName').value || '').trim();
+  var phone = ($('mgrPhone').value || '').trim();
+  var valid = parseDateInput($('validUntil').value);
+  var unit = cur.unit;
+
+  var h = '<div class="kp-head">' +
+    '<div><div class="zh">ЖК «ЭКО СИТИ АЙНИ»</div><div class="doc">Коммерческое предложение · рассрочка · ' + fmtDate(today0()) + '</div></div>' +
+    '<div class="kp-mark">ПРЕДВАРИТЕЛЬНЫЙ РАСЧЁТ</div></div>';
+
+  h += '<div class="kp-obj">';
+  if (unit) {
+    h += 'Квартира <b>№ ' + unit.num + '</b> · подъезд ' + unit.entrance +
+      ' · этаж ' + unit.floor + ' · ' + unit.rooms + '-комн · площадь <b>' +
+      cur.area.toLocaleString('ru-RU') + ' м²</b> · цена ' + fmtMoney(cur.price) + ' за м²<br>';
+  } else {
+    h += 'Квартира площадью <b>' + cur.area.toLocaleString('ru-RU') + ' м²</b> · цена ' +
+      fmtMoney(cur.price) + ' за м²<br>';
+  }
+  if (cur.discount > 0) {
+    h += '<span class="old">' + fmtMoney(cur.base) + '</span> → <span class="new">' + fmtMoney(cur.total) + '</span>' +
+      ' · <span class="save">ваша выгода ' + fmtMoney(cur.discount) + '</span>';
+  } else {
+    h += 'Стоимость: <span class="new">' + fmtMoney(cur.total) + '</span>';
+  }
+  h += '</div>';
+
+  if (unit) {
+    h += '<div class="kp-avail">Наличие квартиры на дату сделки уточняйте у менеджера — расчёт не является бронированием.</div>';
+  }
+
+  if (variants.length > 1) {
+    var head = '<tr><th>Параметр</th>' + variants.map(function (v, i) {
+      return '<th>Вариант ' + (i + 1) + ' · ' + v.months + ' мес</th>';
+    }).join('') + '</tr>';
+    var line = function (name, fn) {
+      return '<tr><td>' + name + '</td>' + variants.map(function (v) { return '<td>' + fn(v) + '</td>'; }).join('') + '</tr>';
+    };
+    h += '<table class="kp-cmp"><thead>' + head + '</thead><tbody>' +
+      line('Стоимость', function (v) { return fmtMoney(v.total); }) +
+      line('Первый взнос', function (v) { return fmtMoney(v.down) + ' (' + fmtPct(v.downPct) + ')'; }) +
+      line('Ежемесячный платёж', function (v) { return v.equalCount > 0 ? fmtMoney(v.monthly) : '—'; }) +
+      line('Финальный платёж', function (v) { return v.tail > 0 ? fmtMoney(v.tail) : '—'; }) +
+      '</tbody></table>';
+  }
+
+  h += variants.map(kpVariantHtml).join('');
+
+  h += '<div class="kp-foot">' +
+    '<div>' + (mgr ? 'Ваш менеджер: <b>' + mgr + '</b>' : '') + (phone ? '<br>' + phone : '') + '</div>' +
+    (valid ? '<div class="kp-valid">Расчёт действителен до ' + fmtDate(valid) + '</div>' : '') +
+    '</div>' +
+    '<div class="kp-note">Предварительный расчёт: параметры квартиры и цена уточняются при бронировании. ' +
+    'Не является публичной офертой. Финальную цену сделки утверждает застройщик.</div>';
+
+  $('kp').innerHTML = h;
+}
+function printKP(layout) {
+  buildKP();
+  document.body.classList.add(layout === 'phone' ? 'print-phone' : 'print-a4');
+  window.print();
+  setTimeout(function () { document.body.classList.remove('print-a4', 'print-phone'); }, 500);
+}
+window.onafterprint = function () { document.body.classList.remove('print-a4', 'print-phone'); };
+
+/* ---------- режим «По квартире» (вшитый справочник) ---------- */
+function fmtArea(a) {
+  return a.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+}
+function fillSelect(sel, items, placeholder) {
+  sel.innerHTML = '<option value="">— ' + placeholder + ' —</option>' + items.map(function (it) {
+    return '<option value="' + it.v + '">' + it.t + '</option>';
+  }).join('');
+}
+function uniqSorted(arr) {
+  return arr.filter(function (v, i) { return arr.indexOf(v) === i; })
+            .sort(function (a, b) { return a - b; });
+}
+
+function buildEntrances() {
+  var ents = uniqSorted(APT.apartments.map(function (o) { return o.entrance; }));
+  fillSelect($('selEntrance'), ents.map(function (e) { return { v: e, t: 'Подъезд ' + e }; }), 'подъезд');
+  fillSelect($('selFloor'), [], 'этаж');
+  fillSelect($('selUnit'), [], 'квартира');
+  applyUnit(null);
+}
+function buildFloors() {
+  var e = +$('selEntrance').value;
+  var floors = uniqSorted(APT.apartments
+    .filter(function (o) { return o.entrance === e; })
+    .map(function (o) { return o.floor; }));
+  fillSelect($('selFloor'), floors.map(function (f) { return { v: f, t: 'Этаж ' + f }; }), 'этаж');
+  fillSelect($('selUnit'), [], 'квартира');
+  applyUnit(null);
+}
+function buildUnits() {
+  var e = +$('selEntrance').value, f = +$('selFloor').value;
+  var units = APT.apartments
+    .filter(function (o) { return o.entrance === e && o.floor === f; })
+    .sort(function (a, b) { return (parseFloat(a.num) || 0) - (parseFloat(b.num) || 0); });
+  fillSelect($('selUnit'), units.map(function (u) {
+    return { v: u.code, t: '№ ' + u.num + ' · ' + u.rooms + '-комн · ' + fmtArea(u.area) + ' м²' };
+  }), 'квартира');
+  applyUnit(null);
+}
+
+function applyUnit(u) {
+  selectedUnit = u;
+  if (!u) {
+    $('unitInfo').textContent = '';
+    if (appMode === 'unit') { $('area').value = ''; }
+    recalc();
+    return;
+  }
+  $('area').value = u.area;
+  $('unitInfo').innerHTML = 'Код: ' + u.code + ' · подъезд ' + u.entrance + ' · этаж ' + u.floor +
+    ' · ' + u.rooms + '-комн · ' + fmtArea(u.area) + ' м²';
+  recalc();
+}
+
+function setMode(m) {
+  if (m === 'unit' && !APT) {
+    alert('Справочник квартир (apartments.js) не загружен — доступен только режим «Прикидка».');
+    return;
+  }
+  appMode = m;
+  $('mEstimate').classList.toggle('on', m === 'estimate');
+  $('mUnit').classList.toggle('on', m === 'unit');
+  $('unitCard').style.display = m === 'unit' ? '' : 'none';
+  $('area').readOnly = m === 'unit';
+  $('modeBadge').textContent = m === 'unit'
+      ? 'Режим «По квартире» — предварительный расчёт'
+      : 'Режим «Прикидка» — предварительный расчёт';
+  if (m === 'unit') {
+    if ($('selUnit').value) {
+      var code = $('selUnit').value;
+      applyUnit(APT.apartments.filter(function (o) { return o.code === code; })[0] || null);
+      return;
+    }
+    applyUnit(selectedUnit);
+    return;
+  }
+  selectedUnit = null;
+  recalc();
+}
+
+/* ---------- события ---------- */
+['area', 'price', 'discount', 'down', 'term', 'payDay'].forEach(function (id) {
+  $(id).oninput = recalc;
+});
+$('firstDate').oninput = function () {
+  var d = parseDateInput(this.value);
+  if (d) $('payDay').value = d.getDate();   /* число месяца — от даты 1-го платежа, редактируемо */
+  recalc();
+};
+$('discPct').onclick = function () {
+  discountType = 'pct';
+  this.classList.add('on'); $('discUsd').classList.remove('on');
+  recalc();
+};
+$('discUsd').onclick = function () {
+  discountType = 'usd';
+  this.classList.add('on'); $('discPct').classList.remove('on');
+  recalc();
+};
+$('modeEqual').onclick = function () {
+  restMode = 'equal';
+  this.classList.add('on'); $('modeTail').classList.remove('on');
+  recalc();
+};
+$('modeTail').onclick = function () {
+  restMode = 'tail';
+  this.classList.add('on'); $('modeEqual').classList.remove('on');
+  recalc();
+};
+$('addAgreed').onclick = function () { addAgreedRow(); };
+$('pinBtn').onclick = function () {
+  if (pinned.length >= MAX_PINNED) return;
+  var c = compute();
+  if (!c.valid || c.overflow > 0) return;
+  pinned.push(c);
+  renderPinned();
+};
+$('printA4').onclick = function () { printKP('a4'); };
+$('printPhone').onclick = function () { printKP('phone'); };
+
+$('mEstimate').onclick = function () { setMode('estimate'); };
+$('mUnit').onclick = function () { setMode('unit'); };
+$('selEntrance').onchange = buildFloors;
+$('selFloor').onchange = buildUnits;
+$('selUnit').onchange = function () {
+  var code = this.value;
+  applyUnit(code ? (APT.apartments.filter(function (o) { return o.code === code; })[0] || null) : null);
+};
+
+/* ---------- старт ---------- */
+(function init() {
+  var t = today0();
+  $('firstDate').value = dateToInput(slotDate(t, 1, t.getDate()));   /* по умолчанию — через месяц */
+  $('payDay').value = t.getDate();
+  var valid = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 7);
+  $('validUntil').value = dateToInput(valid);                        /* срок действия КП: +7 дней */
+
+  $('price').value = basePrice();
+
+  if (APT) {
+    $('dataStamp').textContent = 'Справочник квартир: ' + APT.apartments.length +
+      ' шт., обновлён ' + (APT.generatedAt || '—');
+    if (APT.params.managers && APT.params.managers.length) {
+      $('mgrList').innerHTML = APT.params.managers.map(function (m) {
+        return '<option value="' + m + '"></option>';
+      }).join('');
+    }
+    buildEntrances();
+  }
+
+  render();
+
+  /* офлайн-работа после первой загрузки */
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js');
+  }
+})();
+</script>
+</body>
+</html>
