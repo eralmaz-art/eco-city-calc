@@ -5,3 +5,5 @@
 !/tests
 !/server_next
 !/.gitignore
+# Одноразовый локальный предпросмотр server_next (генерируется awk-командой из ИНСТРУКЦИИ)
+/tests/server_next_preview.html
