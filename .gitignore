@@ -3,6 +3,7 @@
 /*
 !/docs
 !/server
+!/specs
 !/tests
 !/.gitignore
 # Одноразовый локальный предпросмотр server_next (генерируется awk-командой из ИНСТРУКЦИИ)
