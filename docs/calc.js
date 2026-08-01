@@ -1,0 +1,393 @@
+/**
+ * Калькулятор рассрочки — ЖК «Эко Сити Айни».
+ * Единый модуль математики графика платежей (этап A).
+ *
+ * Источник истины — ТЗ «Дополнение, ред. 1.9» (при противоречии главнее ТЗ v0.9):
+ *   — два режима: «От срока» (mode:'term') и «От платежа» (mode:'payment');
+ *   — стартовые платежи с датами вместо единого поля «первый взнос» (раздел 7.1);
+ *   — якорь ежемесячной серии — отдельная дата, правило 29–31 (раздел 7.2);
+ *   — договорённые платежи — реальными датами (раздел 7.3);
+ *   — три способа закрытия хвоста (раздел 3): «Хвост отдельным платежом»,
+ *     «Влить в последний», «Выровнять взносом» (подсказки up/down);
+ *   — правило 10% от стоимости для финального платежа (раздел 4);
+ *   — контрольная сумма сходится до доллара (раздел 4).
+ *
+ * Модуль чистый: без DOM, без сети, без чтения текущей даты — всё через вход.
+ * Подключение: браузер — <script src="calc.js"> (глобаль EcoCalc),
+ * Node (тесты) — require('./calc.js').
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.EcoCalc = factory();
+}(typeof self !== 'undefined' ? self : this, function () {
+'use strict';
+
+var VERSION = '1.0';
+var MAX_MONTHS_DEFAULT = 36;   // потолок срока по действующему ТЗ (или до сдачи дома)
+var FINAL_LIMIT_PCT = 10;      // правило 10% (ред. 1.1): финальный платёж > 10% стоимости — красное
+var HARD_STOP = 1000;          // страховка от бесконечного цикла при аномальном входе
+
+/* Словарь типов строк графика. Стартовые типы — закрытый список (ред. 1.4):
+   «Задаток» исключён решением владельца, в список не добавлять;
+   «Зачёт брони» — только автоподстановка при развитии брони (ТЗ 8.4), руками не выбирается. */
+var TYPES = {
+  down: 'Первоначальный взнос',
+  advance: 'Аванс',
+  booking: 'Зачёт брони',
+  agreed: 'Договорённый',
+  monthly: 'Ежемесячный',
+  final: 'Финальный'
+};
+var START_PAYMENT_TYPES = [TYPES.down, TYPES.advance];
+
+/* ---------- даты ---------- */
+
+function parseDate(v) {
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    return new Date(v.getFullYear(), v.getMonth(), v.getDate());
+  }
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v == null ? '' : v));
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+}
+function iso(d) {
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+function sameDay(a, b) { return a.getTime() === b.getTime(); }
+function sameMonth(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth(); }
+function monthStart(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+
+/**
+ * Дата i-го слота ежемесячной серии от якоря (ТЗ 7.2).
+ * Число месяца — всегда от якоря, не от предыдущей даты: если числа нет
+ * в месяце (29–31 и февраль) — последний день месяца, а в следующем месяце
+ * серия возвращается на своё число (31-е: янв 31 → фев 28/29 → мар 31).
+ */
+function slotDate(anchor, i) {
+  var y = anchor.getFullYear(), m = anchor.getMonth() + i;
+  var daysInMonth = new Date(y, m + 1, 0).getDate();
+  return new Date(y, m, Math.min(anchor.getDate(), daysInMonth));
+}
+
+function money(v) {
+  var n = Math.round(Number(v));
+  return isFinite(n) ? n : 0;
+}
+
+/* ---------- построение графика ---------- */
+
+/**
+ * build(input) → результат расчёта.
+ *
+ * input:
+ *   total          стоимость после скидки, $ (целые доллары)
+ *   startPayments  [{date, sum, type?}] — стартовые платежи (ТЗ 7.1); type из START_PAYMENT_TYPES
+ *   agreedPayments [{date, sum}] — платежи по договорённости, реальными датами (ТЗ 7.3)
+ *   anchorDate     дата первого ежемесячного платежа — якорь серии (ТЗ 7.2)
+ *   mode           'term' («От срока») | 'payment' («От платежа»)
+ *   months         срок в месяцах — для mode:'term'
+ *   monthlyPayment месячный платёж M — для mode:'payment'
+ *   restMode       'equal' | 'tail' — закрытие остатка в режиме «От срока» (ТЗ v0.9, 5.3)
+ *   tailMode       'separate' | 'merge' — закрытие хвоста в режиме «От платежа» (ред. 1.9, §3)
+ *   maxMonths      потолок срока (по умолчанию 36)
+ *   contractDate   дата договора — для флага «квартира без денег» (ТЗ 7.5), необязательна
+ *
+ * Даты входа: 'YYYY-MM-DD' или Date. Даты выхода: 'YYYY-MM-DD'.
+ *
+ * Результат: { ok, mode, total, startSum, agreedSum, monthly, months,
+ *   finalPayment, rows, warnings, checksum, levelSuggestions }
+ *   rows: [{n, date, type, sum, rest}] по возрастанию даты, rest — остаток после платежа.
+ *   warnings: [{code, level:'error'|'red'|'warn', message}]
+ *     error — вход некорректен, график не построен;
+ *     red   — красное предупреждение (график построен, требуется внимание);
+ *     warn  — жёлтая пометка.
+ *   checksum: { total, scheduled, ok } — контрольная строка до доллара.
+ *   levelSuggestions («Выровнять взносом», только mode:'payment'):
+ *     null, если делится ровно, иначе { tail, up:{startSum,delta,months},
+ *     down:{startSum,delta,months}|null } — новый СУММАРНЫЙ размер стартовых
+ *     платежей; какой строке отдать дельту — решает интерфейс.
+ */
+function build(input) {
+  input = input || {};
+  var warnings = [];
+  function push(code, level, message) { warnings.push({ code: code, level: level, message: message }); }
+  function error(code, message) { push(code, 'error', message); }
+
+  var total = money(input.total);
+  var mode = input.mode === 'payment' ? 'payment' : 'term';
+  var maxMonths = money(input.maxMonths) > 0 ? money(input.maxMonths) : MAX_MONTHS_DEFAULT;
+  var anchor = parseDate(input.anchorDate);
+  var contractDate = parseDate(input.contractDate);
+
+  /* стартовые платежи (ТЗ 7.1) */
+  var starts = [];
+  (input.startPayments || []).forEach(function (p) {
+    var d = parseDate(p && p.date), s = money(p && p.sum);
+    if (d && s > 0) starts.push({ date: d, sum: s, type: (p.type || TYPES.down) });
+  });
+  starts.sort(function (a, b) { return a.date - b.date; });
+  var startSum = starts.reduce(function (s, p) { return s + p.sum; }, 0);
+
+  /* договорённые платежи — датами (ТЗ 7.3) */
+  var agreed = [];
+  (input.agreedPayments || []).forEach(function (p) {
+    var d = parseDate(p && p.date), s = money(p && p.sum);
+    if (d && s > 0) agreed.push({ date: d, sum: s });
+  });
+  agreed.sort(function (a, b) { return a.date - b.date; });
+  var agreedTotal = agreed.reduce(function (s, p) { return s + p.sum; }, 0);
+
+  /* валидации входа */
+  if (total <= 0) error('no-total', 'Стоимость должна быть больше нуля.');
+  if (startSum > total) {
+    error('start-exceeds-total', 'Сумма стартовых платежей (' + startSum + ' $) больше стоимости (' + total + ' $).');
+  } else if (startSum + agreedTotal > total) {
+    error('agreed-exceeds-remainder',
+      'Договорённые платежи превышают остаток на ' + (startSum + agreedTotal - total) + ' $. Уменьшите суммы.');
+  }
+  if (!anchor && total - startSum - agreedTotal !== 0) {
+    error('no-anchor', 'Не задана дата первого ежемесячного платежа (якорь серии).');
+  }
+
+  /* жёлтые/красные пометки по датам (ТЗ 6.3, 7.5) */
+  if (contractDate && !starts.some(function (p) { return sameDay(p.date, contractDate); })) {
+    push('no-payment-on-contract-date', 'warn',
+      'На дату договора нет ни одного стартового платежа — «квартира без денег».');
+  }
+  if (anchor && starts.length && anchor < starts[starts.length - 1].date) {
+    push('anchor-before-start', 'warn',
+      'Дата первого ежемесячного платежа раньше последнего стартового — график нелогичен.');
+  }
+
+  var fatal = warnings.some(function (w) { return w.level === 'error'; });
+
+  var rows = starts.map(function (p) { return { date: p.date, type: p.type, sum: p.sum }; });
+  var monthly = 0, finalPayment = 0, months = 0, honoredAgreedSum = 0;
+  var levelSuggestions = null;
+  var finalFromClip = false;
+
+  /* списание одного договорённого платежа; вернуть новый остаток */
+  function spendAgreed(a, remainder) {
+    if (remainder < a.sum) {
+      /* остаток ≤ очередного списания — финальный месяц (ред. 1.9, §2) */
+      rows.push({ date: a.date, type: TYPES.final, sum: remainder });
+      finalPayment = remainder;
+      finalFromClip = true;
+      push('agreed-clipped', 'red', 'Договорённый платёж ' + iso(a.date) +
+        ' уменьшен до остатка ' + remainder + ' $ — он закрывает график.');
+      return 0;
+    }
+    rows.push({ date: a.date, type: TYPES.agreed, sum: a.sum });
+    honoredAgreedSum += a.sum;
+    return remainder - a.sum;
+  }
+
+  if (!fatal && mode === 'payment') {
+    /* ===== режим «От платежа» (ред. 1.9, §2) ===== */
+    var M = money(input.monthlyPayment);
+    var tailMode = input.tailMode === 'merge' ? 'merge' : 'separate';
+    var remainder0 = total - startSum;
+    if (M <= 0) {
+      error('invalid-monthly', 'Месячный платёж должен быть больше нуля.');
+      fatal = true;
+    } else if (M >= remainder0 && remainder0 > 0) {
+      push('single-payment', 'warn', 'Это разовый платёж: уменьшите взнос или сумму.');
+    }
+
+    if (!fatal) {
+      var remainder = remainder0;
+      var p = 0, k = 0;
+      /* договорённые раньше месяца якоря — списываются до серии */
+      while (p < agreed.length && remainder > 0 && agreed[p].date < monthStart(anchor)) {
+        remainder = spendAgreed(agreed[p], remainder);
+        p++;
+      }
+      /* помесячный проход: договорённый месяц — списываем его, иначе M */
+      while (remainder > 0 && k < HARD_STOP) {
+        var d = slotDate(anchor, k);
+        k++;
+        var hadAgreed = false;
+        while (p < agreed.length && remainder > 0 && sameMonth(agreed[p].date, d)) {
+          hadAgreed = true;
+          remainder = spendAgreed(agreed[p], remainder);
+          p++;
+        }
+        if (hadAgreed || remainder <= 0) continue;
+        if (remainder < M) {
+          /* хвост по построению всегда меньше M */
+          rows.push({ date: d, type: TYPES.final, sum: remainder });
+          finalPayment = remainder;
+          remainder = 0;
+        } else {
+          rows.push({ date: d, type: TYPES.monthly, sum: M });
+          remainder -= M;
+        }
+      }
+      months = k;
+      monthly = M;
+      if (remainder > 0) error('term-overflow', 'Срок превысил ' + HARD_STOP + ' месяцев — проверьте вход.');
+
+      /* договорённые за пределами построенного графика — не попали в строки */
+      for (; p < agreed.length; p++) {
+        push('agreed-beyond-schedule', 'warn', 'Договорённый платёж ' + iso(agreed[p].date) +
+          ' (' + agreed[p].sum + ' $) — позже конца графика, в график не вошёл.');
+      }
+
+      if (months > maxMonths) {
+        push('over-max-term', 'red', 'Срок ' + months + ' мес больше максимального ' + maxMonths +
+          ' мес. Минимальный платёж: ' + Math.ceil(remainder0 / maxMonths) + ' $.');
+      }
+
+      /* «Влить в последний» (ред. 1.9, §3.2): активна всегда, размер финального
+         не ограничивается — контроль общим правилом 10% */
+      if (tailMode === 'merge' && finalPayment > 0 && !finalFromClip) {
+        var lastMonthlyIdx = -1, finalIdx = -1, i;
+        for (i = rows.length - 1; i >= 0; i--) {
+          if (finalIdx < 0 && rows[i].type === TYPES.final) finalIdx = i;
+          if (lastMonthlyIdx < 0 && rows[i].type === TYPES.monthly) lastMonthlyIdx = i;
+          if (finalIdx >= 0 && lastMonthlyIdx >= 0) break;
+        }
+        if (lastMonthlyIdx >= 0 && finalIdx >= 0) {
+          rows[finalIdx].date = rows[lastMonthlyIdx].date;
+          rows[finalIdx].sum += M;      /* финальный = M + хвост */
+          rows.splice(lastMonthlyIdx, 1);
+          finalPayment += M;
+          months -= 1;
+        }
+      }
+
+      /* «Выровнять взносом» (ред. 1.9, §3.3): подобрать суммарный стартовый
+         платёж, чтобы (стоимость − стартовые − Σ договорённых) делилось на M нацело */
+      var R = total - startSum - honoredAgreedSum;
+      var tail = R > 0 ? R % M : 0;
+      if (tail > 0) {
+        var nUp = (R - tail) / M;
+        var downStart = startSum - (M - tail);
+        levelSuggestions = {
+          tail: tail,
+          up: { startSum: startSum + tail, delta: tail, months: nUp },
+          down: downStart >= 0
+            ? { startSum: downStart, delta: -(M - tail), months: nUp + 1 }
+            : null
+        };
+      }
+    }
+  } else if (!fatal) {
+    /* ===== режим «От срока» (действующее ТЗ v0.9, 5.2–5.3, поверх дат ред. 1.9) ===== */
+    var termMonths = money(input.months);
+    var restMode = input.restMode === 'tail' ? 'tail' : 'equal';
+    if (termMonths <= 0) {
+      error('invalid-term', 'Срок должен быть больше нуля.');
+      fatal = true;
+    }
+    if (!fatal) {
+      if (termMonths > maxMonths) {
+        push('over-max-term', 'red', 'Срок ' + termMonths + ' мес больше максимального ' + maxMonths + ' мес.');
+      }
+      var slots = [], j;
+      for (j = 0; j < termMonths; j++) slots.push(slotDate(anchor, j));
+      var lastSlot = slots[termMonths - 1];
+
+      /* договорённые: до якоря и в месяцы серии — учитываются; позже — предупреждение */
+      var occupied = slots.map(function () { return false; });
+      agreed.forEach(function (a) {
+        if (a.date < monthStart(anchor)) {
+          rows.push({ date: a.date, type: TYPES.agreed, sum: a.sum });
+          honoredAgreedSum += a.sum;
+          return;
+        }
+        for (var t = 0; t < termMonths; t++) {
+          if (sameMonth(a.date, slots[t])) {
+            occupied[t] = true;
+            rows.push({ date: a.date, type: TYPES.agreed, sum: a.sum });
+            honoredAgreedSum += a.sum;
+            return;
+          }
+        }
+        push('agreed-beyond-schedule', 'warn', 'Договорённый платёж ' + iso(a.date) +
+          ' (' + a.sum + ' $) — вне срока рассрочки, в график не вошёл.');
+      });
+
+      var rem = total - startSum - honoredAgreedSum;
+      months = termMonths;
+
+      if (rem > 0) {
+        var freeIdx = [];
+        for (j = 0; j < termMonths; j++) if (!occupied[j]) freeIdx.push(j);
+
+        if (restMode === 'equal' && freeIdx.length > 0) {
+          monthly = Math.round(rem / freeIdx.length);
+          if (monthly <= 0) {
+            /* остаток меньше числа свободных месяцев — одним платежом в конце */
+            rows.push({ date: slots[freeIdx[freeIdx.length - 1]], type: TYPES.monthly, sum: rem });
+            monthly = rem;
+          } else {
+            var lastVal = rem - monthly * (freeIdx.length - 1); /* сведение до доллара */
+            if (lastVal <= 0) {
+              monthly = Math.floor(rem / freeIdx.length);
+              lastVal = rem - monthly * (freeIdx.length - 1);
+            }
+            for (j = 0; j < freeIdx.length; j++) {
+              var v = j === freeIdx.length - 1 ? lastVal : monthly;
+              if (v > 0) rows.push({ date: slots[freeIdx[j]], type: TYPES.monthly, sum: v });
+            }
+          }
+        } else {
+          /* «хвостом в конце» — или все месяцы заняты договорёнными */
+          if (restMode === 'equal') {
+            push('all-months-busy', 'warn',
+              'Во всех месяцах срока есть договорённые платежи — остаток показан финальным платежом.');
+          }
+          rows.push({ date: lastSlot, type: TYPES.final, sum: rem });
+          finalPayment = rem;
+        }
+      }
+    }
+  }
+
+  /* правило 10% (ред. 1.1) — во всех режимах построения графика */
+  if (!fatal && finalPayment > total * FINAL_LIMIT_PCT / 100) {
+    push('final-over-10pct', 'red', 'Финальный платёж ' + finalPayment + ' $ превышает ' +
+      FINAL_LIMIT_PCT + '% стоимости — требуется согласование с руководителем.');
+  }
+
+  /* сортировка по дате (при равенстве дат порядок добавления сохраняется) */
+  rows.forEach(function (r, i) { r._i = i; });
+  rows.sort(function (a, b) { return (a.date - b.date) || (a._i - b._i); });
+  var rest = total;
+  var out = rows.map(function (r, i) {
+    rest -= r.sum;
+    return { n: i + 1, date: iso(r.date), type: r.type, sum: r.sum, rest: rest };
+  });
+
+  /* контрольная строка: стоимость = стартовые + договорённые + серия + хвост, до доллара */
+  var scheduled = out.reduce(function (s, r) { return s + r.sum; }, 0);
+  var checksum = { total: total, scheduled: scheduled, ok: !fatal && scheduled === total };
+
+  fatal = warnings.some(function (w) { return w.level === 'error'; });
+  return {
+    ok: !fatal && checksum.ok,
+    mode: mode,
+    total: total,
+    startSum: startSum,
+    agreedSum: honoredAgreedSum,
+    monthly: monthly,
+    months: months,
+    finalPayment: finalPayment,
+    rows: out,
+    warnings: warnings,
+    checksum: checksum,
+    levelSuggestions: levelSuggestions
+  };
+}
+
+return {
+  VERSION: VERSION,
+  MAX_MONTHS_DEFAULT: MAX_MONTHS_DEFAULT,
+  FINAL_LIMIT_PCT: FINAL_LIMIT_PCT,
+  TYPES: TYPES,
+  START_PAYMENT_TYPES: START_PAYMENT_TYPES,
+  slotDate: slotDate,
+  build: build
+};
+
+}));

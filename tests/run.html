@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тесты calc.js — калькулятор рассрочки</title>
+<style>
+  body { font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; margin: 24px; color: #16281e; background: #f2f5f2; }
+  h1 { font-size: 19px; }
+  #summary { font-size: 17px; font-weight: 700; padding: 10px 14px; border-radius: 9px; margin: 14px 0; }
+  #summary.pass { background: #e7f1ec; color: #1d6b4f; }
+  #summary.fail { background: #fdecea; color: #c0392b; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 6px 10px; border-bottom: 1px solid #e0e6e1; background: #fff; }
+  li.ok::before { content: "✓ "; color: #1d6b4f; font-weight: 700; }
+  li.bad::before { content: "✗ "; color: #c0392b; font-weight: 700; }
+  li .err { display: block; color: #c0392b; font-size: 13px; margin-left: 20px; }
+</style>
+</head>
+<body>
+<h1>Тесты docs/calc.js — математика графика (ТЗ ред. 1.9)</h1>
+<div id="summary">Загрузка…</div>
+<ul id="list"></ul>
+<script src="../docs/calc.js"></script>
+<script src="calc.test.js"></script>
+<script>
+(function () {
+  var R = window.CALC_TEST_RESULTS;
+  var s = document.getElementById('summary');
+  if (!R) { s.textContent = 'Тесты не выполнились — смотрите консоль.'; s.className = 'fail'; return; }
+  s.textContent = (R.failed === 0 ? 'ВСЕ ТЕСТЫ ПРОШЛИ: ' : 'ЕСТЬ ПАДЕНИЯ: ') + R.passed + ' из ' + R.results.length;
+  s.className = R.failed === 0 ? 'pass' : 'fail';
+  var list = document.getElementById('list');
+  R.results.forEach(function (r) {
+    var li = document.createElement('li');
+    li.className = r.ok ? 'ok' : 'bad';
+    li.textContent = r.name;
+    if (!r.ok) {
+      var e = document.createElement('span');
+      e.className = 'err';
+      e.textContent = r.error;
+      li.appendChild(e);
+    }
+    list.appendChild(li);
+  });
+})();
+</script>
+</body>
+</html>
