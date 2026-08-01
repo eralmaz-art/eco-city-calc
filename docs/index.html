@@ -199,6 +199,12 @@
   .kp-head .doc { color: var(--muted); }
   .kp-mark { background: var(--gold); color: #3d2c07; font-weight: 800; font-size: 12px;
              padding: 5px 12px; border-radius: 999px; white-space: nowrap; }
+  .kp-for {
+    font-size: 15px; margin-bottom: 10px; padding: 8px 12px;
+    background: var(--accent-soft); border-radius: 8px;
+  }
+  .kp-for b { color: var(--accent); }
+  body.print-phone .kp-for { font-size: 18px; }
   .kp-obj { margin-bottom: 12px; }
   .kp-obj .old { text-decoration: line-through; color: var(--muted); }
   .kp-obj .new { font-size: 22px; font-weight: 800; color: var(--accent); }
@@ -273,6 +279,9 @@
         </div>
       </div>
       <div class="price-view" id="priceView"></div>
+      <label class="fld" style="margin-top:10px;margin-bottom:0"><b>Имя клиента (для КП, не сохраняется)</b>
+        <input type="text" id="clientName" placeholder="Например: Айбек и Айгуль" autocomplete="off">
+      </label>
     </div>
 
     <div class="card" id="startCard">
@@ -421,6 +430,11 @@ function basePrice() {
 
 /* ---------- форматирование ---------- */
 function fmtMoney(n) { return new Intl.NumberFormat('ru-RU').format(Math.round(n)) + ' $'; }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (ch) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+  });
+}
 function fmtPct(n)   { return (Math.round(n * 10) / 10).toLocaleString('ru-RU') + '%'; }
 function fmtDate(d) {
   return ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + d.getFullYear();
@@ -809,6 +823,12 @@ function buildKP() {
     '<div><div class="zh">ЖК «ЭКО СИТИ АЙНИ»</div><div class="doc">Коммерческое предложение · рассрочка · ' + fmtDate(today0()) + '</div></div>' +
     '<div class="kp-mark">ПРЕДВАРИТЕЛЬНЫЙ РАСЧЁТ</div></div>';
 
+  /* имя клиента: только из поля в памяти страницы, нигде не сохраняется */
+  var client = ($('clientName').value || '').trim();
+  if (client) {
+    h += '<div class="kp-for">Расчёт подготовлен для: <b>' + escapeHtml(client) + '</b> · ' + fmtDate(today0()) + '</div>';
+  }
+
   h += '<div class="kp-obj">';
   if (unit) {
     h += 'Квартира <b>№ ' + unit.num + '</b> · подъезд ' + unit.entrance +
@@ -1011,6 +1031,15 @@ $('selUnit').onchange = function () {
   var code = this.value;
   applyUnit(code ? (APT.apartments.filter(function (o) { return o.code === code; })[0] || null) : null);
 };
+
+/* Имя клиента живёт только в памяти открытой страницы. Браузер сам снимает
+   состояние форм при уходе со страницы и восстанавливает его при перезагрузке
+   и возврате по истории (bfcache) — причём восстановление может прийти ПОСЛЕ
+   pageshow. Поэтому гасим с двух сторон: очищаем поле в момент ухода (браузеру
+   нечего сохранять) и на показе страницы (страховка для bfcache). */
+window.addEventListener('pagehide', function () { $('clientName').value = ''; });
+window.addEventListener('beforeunload', function () { $('clientName').value = ''; });
+window.addEventListener('pageshow', function () { $('clientName').value = ''; });
 
 /* ---------- старт ---------- */
 (function init() {

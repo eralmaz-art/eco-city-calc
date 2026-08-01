@@ -5,7 +5,7 @@
  * ПРИ ЛЮБОМ ОБНОВЛЕНИИ ФАЙЛОВ (apartments.js, index.html…) поднимите номер
  * CACHE_VERSION на единицу — телефоны заметят новую версию и обновят кэш.
  */
-var CACHE_VERSION = 2;
+var CACHE_VERSION = 3;
 var CACHE_NAME = 'eco-city-aini-calc-v' + CACHE_VERSION;
 
 var ASSETS = [
