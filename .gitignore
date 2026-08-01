@@ -2,8 +2,8 @@
 # Рабочие файлы с данными клиентов (xlsx, docx) публиковать нельзя.
 /*
 !/docs
+!/server
 !/tests
-!/server_next
 !/.gitignore
 # Одноразовый локальный предпросмотр server_next (генерируется awk-командой из ИНСТРУКЦИИ)
 /tests/server_next_preview.html

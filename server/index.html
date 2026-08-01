@@ -1,7 +1,10 @@
 <meta charset="utf-8">
-<!-- Калькулятор рассрочки — ЖК «Эко Сити Айни».
-     Этап 1: режим «Прикидка» (расчёт на клиенте).
-     Этап 2: режим «По квартире» — чтение «Объектов» и «Справочников» через google.script.run, строго read-only. -->
+<!-- Калькулятор рассрочки — ЖК «Эко Сити Айни». Версия по ТЗ «Дополнение, ред. 1.9».
+     Этап 1: «Прикидка» (расчёт на клиенте).
+     Этап 2: «По квартире» — чтение «Объектов» и «Справочников» через google.script.run, строго read-only.
+     Этап 3: «Зафиксировать» — построчная запись графика в лист «График».
+     ВСЯ математика графика — в файле «calc» (модуль EcoCalc), подключается через <?!= include ?>.
+     В этом файле остаются только цена/скидка, ввод и отрисовка. Расчёт здесь не дублировать. -->
 <style>
   :root {
     --bg: #f2f5f2;
@@ -16,9 +19,9 @@
     --warn-bg: #fdf3e3;
     --warn-ink: #8a6117;
     --err-bg: #fdecea;
-    --seg-down: #1d6b4f;      /* взнос */
+    --seg-down: #1d6b4f;      /* стартовые */
     --seg-agreed: #d9a441;    /* договорённые */
-    --seg-equal: #7fb69a;     /* равные */
+    --seg-equal: #7fb69a;     /* ежемесячные */
     --seg-tail: #b0563f;      /* хвост / финальный */
   }
   * { box-sizing: border-box; margin: 0; }
@@ -91,6 +94,13 @@
   .term-line { display: flex; justify-content: space-between; align-items: baseline; }
   .term-val { font-size: 22px; font-weight: 800; color: var(--accent); }
   .term-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+
+  /* стартовые платежи */
+  .start-row { display: grid; grid-template-columns: 1.15fr .9fr 1fr 34px; gap: 8px; margin-bottom: 8px; }
+  .start-row button {
+    border: 1px solid var(--line); background: #fff; border-radius: 9px; cursor: pointer;
+    color: var(--danger); font-size: 16px;
+  }
 
   /* договорённые платежи */
   .agreed-row { display: grid; grid-template-columns: 1fr 1fr 34px; gap: 8px; margin-bottom: 8px; }
@@ -281,39 +291,54 @@
       <div class="price-view" id="priceView"></div>
     </div>
 
-    <div class="card">
-      <h2>Первый взнос и срок</h2>
-      <label class="fld"><b>Первый взнос, $</b>
-        <input type="number" id="down" min="0" step="1" value="0">
-      </label>
+    <div class="card" id="startCard">
+      <h2>Стартовые платежи</h2>
+      <div id="startRows"></div>
+      <button type="button" class="btn ghost" id="addStart">＋ Добавить стартовый платёж</button>
       <div class="chips" id="downChips"></div>
       <div class="hint" id="downPctView"></div>
+    </div>
 
-      <div style="margin-top:16px">
+    <div class="card">
+      <h2>Расчёт графика</h2>
+      <div class="toggle">
+        <button type="button" id="cmTerm" class="on">От срока</button>
+        <button type="button" id="cmPay">От платежа</button>
+      </div>
+
+      <div id="termBlock" style="margin-top:14px">
         <div class="term-line"><b>Срок рассрочки</b><span class="term-val" id="termVal">18 мес</span></div>
         <input type="range" id="term" min="3" max="36" step="1" value="18">
         <div class="term-scale"><span>3</span><span>12</span><span>24</span><span>36</span></div>
+        <div class="seg" id="restSeg">
+          <button type="button" id="modeEqual" class="on">Остаток — равными долями</button>
+          <button type="button" id="modeTail">Остаток — хвостом в конце</button>
+        </div>
       </div>
 
-      <div class="row2" style="margin-top:12px">
-        <label class="fld"><b>Дата 1-го платежа</b>
-          <input type="date" id="firstDate">
+      <div id="payBlock" style="display:none;margin-top:14px">
+        <label class="fld"><b>Платёж в месяц, $</b>
+          <input type="number" id="mPay" min="0" step="50" value="1500">
         </label>
-        <label class="fld"><b>Число месяца</b>
-          <input type="number" id="payDay" min="1" max="31" step="1">
-        </label>
+        <div class="hint" id="payTermView"></div>
+        <div class="seg" id="tailSeg">
+          <button type="button" id="tailSeparate" class="on">Хвост отдельным платежом</button>
+          <button type="button" id="tailMerge">Влить в последний</button>
+          <button type="button" id="tailLevel">Выровнять взносом</button>
+        </div>
+        <div class="chips" id="levelChips" style="display:none"></div>
       </div>
-      <div class="hint">Равные платежи идут этим числом каждого месяца.</div>
+
+      <label class="fld" style="margin-top:14px"><b>Первый ежемесячный платёж (якорь серии)</b>
+        <input type="date" id="anchorDate">
+      </label>
+      <div class="hint">Дальше платежи идут этим же числом каждый месяц. Если числа нет в месяце (29–31, февраль) — последний день месяца.</div>
     </div>
 
     <div class="card" id="agreedCard">
       <h2>Платежи по договорённости</h2>
       <div id="agreedRows"></div>
       <button type="button" class="btn ghost" id="addAgreed">＋ Добавить платёж</button>
-      <div class="seg">
-        <button type="button" id="modeEqual" class="on">Остаток — равными долями</button>
-        <button type="button" id="modeTail">Остаток — хвостом в конце</button>
-      </div>
     </div>
   </section>
 
@@ -391,18 +416,20 @@
 <!-- КП — рендерится перед печатью, виден только в @media print -->
 <div id="kp"></div>
 
+<?!= include('calc'); ?>
 <script>
 'use strict';
 
-/* «Порог хвоста, %» — по умолчанию из ТЗ; в режиме «По квартире» берётся из «Справочников». */
-var TAIL_LIMIT_DEFAULT = 30;
 var DOWN_CHIP_PCTS = [30, 40, 50, 60, 70];
 var MAX_PINNED = 3;
+var MAX_MONTHS = 36;
 
 var $ = function (id) { return document.getElementById(id); };
 
 var discountType = 'pct';   // 'pct' | 'usd'
-var restMode = 'equal';     // 'equal' | 'tail'
+var calcMode = 'term';      // 'term' («От срока») | 'payment' («От платежа»)
+var restMode = 'equal';     // 'equal' | 'tail' — режим «От срока»
+var tailMode = 'separate';  // 'separate' | 'merge' | 'level' — режим «От платежа»
 var pinned = [];
 
 var appMode = 'estimate';   // 'estimate' («Прикидка») | 'unit' («По квартире»)
@@ -413,10 +440,14 @@ var selectedUnit = null;
 var fixedInfo = null;       // результат успешной фиксации (сбрасывается при изменении расчёта)
 var fixCtx = null;          // контекст открытого диалога фиксации: { contracts, calc }
 
-function tailLimitPct() {
-  return unitData && unitData.params && unitData.params.tailLimitPct > 0
-      ? unitData.params.tailLimitPct : TAIL_LIMIT_DEFAULT;
-}
+/* цвет тега/сегмента по типу строки графика из calc.js */
+var CLS = {};
+CLS[EcoCalc.TYPES.down] = 'down';
+CLS[EcoCalc.TYPES.advance] = 'down';
+CLS[EcoCalc.TYPES.booking] = 'down';
+CLS[EcoCalc.TYPES.agreed] = 'agreed';
+CLS[EcoCalc.TYPES.monthly] = 'equal';
+CLS[EcoCalc.TYPES.final] = 'tail';
 
 /* google.script.run есть только внутри Apps Script; вне его (локальный
    предпросмотр) используется тестовый набор данных MOCK_DATA. */
@@ -459,15 +490,67 @@ function parseDateInput(v) {
 }
 function today0() { var d = new Date(); d.setHours(0, 0, 0, 0); return d; }
 
-/* i-я дата графика: первая — как выбрана, дальше — «число месяца» с поджатием к концу месяца */
-function slotDate(first, i, payDay) {
-  if (i === 0) return new Date(first.getFullYear(), first.getMonth(), first.getDate());
-  var y = first.getFullYear(), m = first.getMonth() + i;
-  var dim = new Date(y, m + 1, 0).getDate();
-  return new Date(y, m, Math.min(payDay, dim));
+/* ---------- стартовые платежи (строки: дата + сумма + тип) ---------- */
+function addStartRow(dateVal, sumVal, typeVal) {
+  var row = document.createElement('div');
+  row.className = 'start-row';
+  var options = EcoCalc.START_PAYMENT_TYPES.map(function (t) {
+    return '<option value="' + t + '"' + (t === typeVal ? ' selected' : '') + '>' + t + '</option>';
+  }).join('');
+  row.innerHTML =
+    '<input type="date" class="st-date">' +
+    '<input type="number" class="st-sum" min="0" step="1" placeholder="Сумма, $">' +
+    '<select class="st-type">' + options + '</select>' +
+    '<button type="button" title="Удалить">✕</button>';
+  if (dateVal) row.querySelector('.st-date').value = dateVal;
+  if (sumVal) row.querySelector('.st-sum').value = sumVal;
+  row.querySelector('button').onclick = function () { row.remove(); recalc(); };
+  row.querySelector('.st-date').oninput = recalc;
+  row.querySelector('.st-sum').oninput = recalc;
+  row.querySelector('.st-type').onchange = recalc;
+  $('startRows').appendChild(row);
+}
+function readStartPayments() {
+  var out = [];
+  var rows = document.querySelectorAll('#startRows .start-row');
+  for (var i = 0; i < rows.length; i++) {
+    var d = parseDateInput(rows[i].querySelector('.st-date').value);
+    var s = Math.round(+rows[i].querySelector('.st-sum').value || 0);
+    var t = rows[i].querySelector('.st-type').value;
+    if (d && s > 0) out.push({ date: d, sum: s, type: t });
+  }
+  return out;
+}
+/**
+ * Подставить новый суммарный размер стартовых платежей (чипы %, «Выровнять взносом»).
+ * Дельта отдаётся самой крупной строке; при уменьшении ниже нуля — переходит на следующую.
+ */
+function applyStartTotal(target) {
+  target = Math.round(target);
+  var rows = document.querySelectorAll('#startRows .start-row');
+  var items = [], cur = 0, i;
+  for (i = 0; i < rows.length; i++) {
+    var el = rows[i].querySelector('.st-sum');
+    var s = Math.round(+el.value || 0);
+    items.push({ el: el, sum: s });
+    cur += s;
+  }
+  if (!items.length) {
+    addStartRow(dateToInput(today0()), target || '', EcoCalc.TYPES.down);
+    recalc();
+    return;
+  }
+  var delta = target - cur;
+  items.sort(function (a, b) { return b.sum - a.sum; });
+  for (i = 0; i < items.length && delta !== 0; i++) {
+    var v = items[i].sum + delta;
+    if (v < 0) { delta = v; v = 0; } else { delta = 0; }
+    items[i].el.value = v;
+  }
+  recalc();
 }
 
-/* ---------- договорённые платежи (строки) ---------- */
+/* ---------- договорённые платежи (строки: дата + сумма) ---------- */
 function addAgreedRow(dateVal, sumVal) {
   var row = document.createElement('div');
   row.className = 'agreed-row';
@@ -490,11 +573,10 @@ function readAgreed() {
     var s = Math.round(+rows[i].querySelector('.ag-sum').value || 0);
     if (d && s > 0) out.push({ date: d, sum: s });
   }
-  out.sort(function (a, b) { return a.date - b.date; });
   return out;
 }
 
-/* ---------- расчёт ---------- */
+/* ---------- расчёт: цена/скидка здесь, весь график — calc.js ---------- */
 function compute() {
   var area = +$('area').value || 0;
   var price = +$('price').value || 0;
@@ -505,77 +587,55 @@ function compute() {
   discount = Math.min(Math.max(discount, 0), base);
   var total = base - discount;
 
-  var downRaw = Math.round(+$('down').value || 0);
-  var down = Math.min(Math.max(downRaw, 0), total);
-  var downClamped = downRaw > total && total > 0;
-
-  var months = +$('term').value;
-  var first = parseDateInput($('firstDate').value) || slotDate(today0(), 1, today0().getDate());
-  var payDay = Math.min(Math.max(Math.round(+$('payDay').value || first.getDate()), 1), 31);
-
-  var slots = [];
-  for (var i = 0; i < months; i++) slots.push(slotDate(first, i, payDay));
-  var lastDate = slots[months - 1];
-
-  var agreed = readAgreed();
-  var agreedSum = agreed.reduce(function (s, a) { return s + a.sum; }, 0);
-  var remainder = total - down - agreedSum;
-  var overflow = remainder < 0 ? -remainder : 0;
-
-  var badDates = agreed.filter(function (a) { return a.date < today0() || a.date > lastDate; });
-
-  /* занятые месяцы: в месяце есть договорённый платёж */
-  var occupied = slots.map(function (d) {
-    return agreed.some(function (a) {
-      return a.date.getFullYear() === d.getFullYear() && a.date.getMonth() === d.getMonth();
-    });
+  var res = EcoCalc.build({
+    total: total,
+    contractDate: today0(),
+    startPayments: readStartPayments(),
+    agreedPayments: readAgreed(),
+    anchorDate: parseDateInput($('anchorDate').value),
+    mode: calcMode,
+    months: +$('term').value,
+    monthlyPayment: Math.round(+$('mPay').value || 0),
+    restMode: restMode,
+    tailMode: tailMode === 'merge' ? 'merge' : 'separate',
+    maxMonths: MAX_MONTHS
   });
-  var freeCount = occupied.filter(function (o) { return !o; }).length;
 
-  var regular = slots.map(function () { return 0; });
-  var tail = 0, monthly = 0, lastEqual = 0, equalCount = 0, allBusy = false;
-
-  if (remainder > 0) {
-    if (restMode === 'equal' && freeCount > 0) {
-      monthly = Math.round(remainder / freeCount);
-      var assigned = 0, lastIdx = -1;
-      for (var j = 0; j < months; j++) {
-        if (!occupied[j]) { regular[j] = monthly; assigned += monthly; lastIdx = j; }
-      }
-      regular[lastIdx] += remainder - assigned;  /* сведение до доллара */
-      lastEqual = regular[lastIdx];
-      equalCount = freeCount;
-    } else {
-      tail = remainder;                          /* режим «хвост» или все месяцы заняты */
-      allBusy = restMode === 'equal' && freeCount === 0;
-    }
-  }
-  var tailPct = total > 0 ? tail / total * 100 : 0;
-
-  /* график */
-  var rows = [];
-  if (down > 0) rows.push({ date: today0(), type: 'Первоначальный взнос', cls: 'down', sum: down });
-  agreed.forEach(function (a) { rows.push({ date: a.date, type: 'Договорённый', cls: 'agreed', sum: a.sum }); });
-  slots.forEach(function (d, k) {
-    if (regular[k] > 0) rows.push({ date: d, type: 'Ежемесячный', cls: 'equal', sum: regular[k] });
+  var rows = res.rows.map(function (r) {
+    return { n: r.n, date: parseDateInput(r.date), type: r.type, cls: CLS[r.type] || 'down', sum: r.sum, rest: r.rest };
   });
-  if (tail > 0) rows.push({ date: lastDate, type: 'Финальный', cls: 'tail', sum: tail });
-  rows.sort(function (a, b) { return a.date - b.date; });
-  var rest = total;
-  rows.forEach(function (r, k) { rest -= r.sum; r.rest = rest; r.n = k + 1; });
-
-  var regularSum = regular.reduce(function (s, v) { return s + v; }, 0);
+  var monthlyRows = rows.filter(function (r) { return r.cls === 'equal'; });
+  var regularSum = 0;
+  monthlyRows.forEach(function (r) { regularSum += r.sum; });
+  var seriesRows = rows.filter(function (r) { return r.cls === 'equal' || r.cls === 'tail'; });
+  var anchor = parseDateInput($('anchorDate').value);
 
   return {
     valid: area > 0 && price > 0,
     area: area, price: price, base: base, discount: discount, total: total,
-    down: down, downPct: total > 0 ? down / total * 100 : 0, downClamped: downClamped,
-    months: months, firstDate: first, lastDate: lastDate, payDay: payDay,
-    agreed: agreed, agreedSum: agreedSum, badDates: badDates,
-    restMode: restMode, monthly: monthly, lastEqual: lastEqual, equalCount: equalCount,
-    regularSum: regularSum, tail: tail, tailPct: tailPct,
-    overflow: overflow, allBusy: allBusy, rows: rows
+    calcMode: calcMode,
+    down: res.startSum,
+    downPct: total > 0 ? res.startSum / total * 100 : 0,
+    agreedSum: res.agreedSum,
+    regularSum: regularSum,
+    monthly: res.monthly,
+    equalCount: monthlyRows.length,
+    lastEqual: monthlyRows.length ? monthlyRows[monthlyRows.length - 1].sum : 0,
+    tail: res.finalPayment,
+    tailPct: total > 0 ? res.finalPayment / total * 100 : 0,
+    months: res.months || +$('term').value,
+    firstDate: seriesRows.length ? seriesRows[0].date : anchor,
+    lastDate: rows.length ? rows[rows.length - 1].date : anchor,
+    rows: rows,
+    warnings: res.warnings,
+    ok: res.ok,
+    checksum: res.checksum,
+    level: res.levelSuggestions
   };
+}
+
+function hasWarning(c, code) {
+  return c.warnings.some(function (w) { return w.code === code; });
 }
 
 /* ---------- отрисовка ---------- */
@@ -584,9 +644,9 @@ function segColor(key) {
 }
 function segments(c) {
   return [
-    { key: 'down',   label: 'Взнос',        v: c.down },
+    { key: 'down',   label: 'Стартовые',    v: c.down },
     { key: 'agreed', label: 'Договорённые', v: c.agreedSum },
-    { key: 'equal',  label: 'Равные',       v: c.regularSum },
+    { key: 'equal',  label: 'Ежемесячные',  v: c.regularSum },
     { key: 'tail',   label: 'Финальный',    v: c.tail }
   ].filter(function (s) { return s.v > 0; });
 }
@@ -606,7 +666,8 @@ function legendHtml(c) {
   }).join('');
 }
 function controlHtml(c) {
-  var parts = [fmtMoney(c.down) + ' взнос'];
+  var parts = [];
+  if (c.down > 0) parts.push(fmtMoney(c.down) + ' стартовые');
   if (c.agreedSum > 0) parts.push(fmtMoney(c.agreedSum) + ' договорённые');
   if (c.equalCount > 0) {
     if (c.lastEqual === c.monthly) {
@@ -616,9 +677,9 @@ function controlHtml(c) {
     }
   }
   if (c.tail > 0) parts.push(fmtMoney(c.tail) + ' финальный');
-  var ok = c.overflow === 0;
+  if (!parts.length) parts.push('0 $');
   return fmtMoney(c.total) + ' = ' + parts.join(' + ') +
-    (ok ? ' <span class="ok">✓ сходится</span>' : '');
+    (c.checksum.ok ? ' <span class="ok">✓ сходится</span>' : '');
 }
 function schedRowsHtml(c) {
   return c.rows.map(function (r) {
@@ -646,7 +707,7 @@ function render() {
     $('priceView').innerHTML = 'Стоимость: <span class="new">' + fmtMoney(c.total) + '</span>';
   }
 
-  /* чипы взноса */
+  /* чипы стартовых */
   var chipsBox = $('downChips');
   chipsBox.innerHTML = '';
   DOWN_CHIP_PCTS.forEach(function (p) {
@@ -656,14 +717,42 @@ function render() {
     if (c.total > 0 && c.down === Math.round(c.total * p / 100)) b.className = 'on';
     b.onclick = function () {
       var cc = compute();
-      $('down').value = Math.round(cc.total * p / 100);
-      recalc();
+      applyStartTotal(Math.round(cc.total * p / 100));
     };
     chipsBox.appendChild(b);
   });
-  $('downPctView').textContent = c.total > 0 ? 'Взнос: ' + fmtPct(c.downPct) + ' от стоимости' : '';
+  $('downPctView').textContent = c.total > 0 ? 'Стартовые: ' + fmtPct(c.downPct) + ' от стоимости' : '';
 
-  $('termVal').textContent = c.months + ' мес';
+  $('termVal').textContent = (+$('term').value) + ' мес';
+
+  /* срок в режиме «От платежа» */
+  if (c.calcMode === 'payment' && c.valid) {
+    $('payTermView').textContent = 'Срок: ' + c.months + ' мес' +
+      (c.tail > 0 ? ' · финальный ' + fmtMoney(c.tail) : ' · без хвоста');
+  } else {
+    $('payTermView').textContent = '';
+  }
+
+  /* подсказки «Выровнять взносом» */
+  var lc = $('levelChips');
+  if (c.calcMode === 'payment' && tailMode === 'level' && c.valid) {
+    lc.style.display = '';
+    if (c.level) {
+      var lh = '<button type="button" id="lvlUp">Взнос ↑ ' + fmtMoney(c.level.up.startSum) +
+        ' → ровно ' + c.level.up.months + ' × ' + fmtMoney(c.monthly) + '</button>';
+      if (c.level.down) {
+        lh += '<button type="button" id="lvlDown">Взнос ↓ ' + fmtMoney(c.level.down.startSum) +
+          ' → ровно ' + c.level.down.months + ' × ' + fmtMoney(c.monthly) + '</button>';
+      }
+      lc.innerHTML = lh;
+      $('lvlUp').onclick = function () { applyStartTotal(c.level.up.startSum); };
+      if (c.level.down) $('lvlDown').onclick = function () { applyStartTotal(c.level.down.startSum); };
+    } else {
+      lc.innerHTML = '<span class="hint">Хвоста нет — график уже ровный.</span>';
+    }
+  } else {
+    lc.style.display = 'none';
+  }
 
   /* главная цифра */
   if (!c.valid) {
@@ -674,7 +763,8 @@ function render() {
     $('bigLbl').textContent = 'Ежемесячный платёж';
     $('bigVal').textContent = fmtMoney(c.monthly);
     $('bigSub').textContent = c.equalCount + ' платеж(ей), с ' + fmtDate(c.firstDate) + ' по ' + fmtDate(c.lastDate) +
-      (c.lastEqual !== c.monthly ? ' · последний: ' + fmtMoney(c.lastEqual) : '');
+      (c.lastEqual !== c.monthly ? ' · последний: ' + fmtMoney(c.lastEqual) : '') +
+      (c.tail > 0 ? ' · финальный: ' + fmtMoney(c.tail) : '');
   } else if (c.tail > 0) {
     $('bigLbl').textContent = 'Финальный платёж';
     $('bigVal').textContent = fmtMoney(c.tail);
@@ -682,7 +772,7 @@ function render() {
   } else {
     $('bigLbl').textContent = 'Ежемесячный платёж';
     $('bigVal').textContent = fmtMoney(0);
-    $('bigSub').textContent = c.overflow > 0 ? '' : 'Стоимость закрыта взносом и договорённостями';
+    $('bigSub').textContent = c.checksum.ok ? 'Стоимость закрыта стартовыми и договорёнными' : '';
   }
 
   $('controlLine').innerHTML = c.valid ? controlHtml(c) : '';
@@ -694,15 +784,13 @@ function render() {
   }).join('');
   $('legend').innerHTML = c.valid ? legendHtml(c) : '';
 
-  /* предупреждения */
+  /* предупреждения — из calc.js: error/red — красные, warn — жёлтые */
   var alerts = [];
-  if (c.overflow > 0) alerts.push({ cls: 'err', t: 'Договорённые платежи превышают остаток на ' + fmtMoney(c.overflow) + '. Уменьшите суммы.' });
-  if (c.downClamped) alerts.push({ cls: 'warn', t: 'Первый взнос не может быть больше стоимости — ограничен суммой ' + fmtMoney(c.total) + '.' });
-  if (c.tail > 0 && c.tailPct > tailLimitPct()) alerts.push({ cls: 'warn', t: 'Финальный платёж ' + fmtPct(c.tailPct) + ' от стоимости — выше порога ' + tailLimitPct() + '%.' });
-  if (c.allBusy) alerts.push({ cls: 'warn', t: 'Во всех месяцах срока есть договорённые платежи — остаток показан финальным платежом.' });
-  c.badDates.forEach(function (a) {
-    alerts.push({ cls: 'warn', t: 'Договорённый платёж ' + fmtDate(a.date) + ' — вне срока рассрочки (допустимо: с ' + fmtDate(today0()) + ' по ' + fmtDate(c.lastDate) + ').' });
-  });
+  if (c.valid) {
+    c.warnings.forEach(function (w) {
+      alerts.push({ cls: w.level === 'warn' ? 'warn' : 'err', t: w.message });
+    });
+  }
   if (appMode === 'unit' && selectedUnit) {
     var sk = statusKind(selectedUnit);
     if (sk === 'sold') alerts.push({ cls: 'err', t: 'Квартира № ' + selectedUnit.num + ' ПРОДАНА' +
@@ -712,14 +800,15 @@ function render() {
     if (sk === 'other') alerts.push({ cls: 'warn', t: 'Квартира № ' + selectedUnit.num + ' — статус «' + selectedUnit.status + '», продажа через калькулятор не предполагается.' });
   }
   $('alerts').innerHTML = alerts.map(function (a) { return '<div class="alert ' + a.cls + '">' + a.t + '</div>'; }).join('');
-  $('agreedCard').classList.toggle('error-frame', c.overflow > 0);
+  $('startCard').classList.toggle('error-frame', c.valid && hasWarning(c, 'start-exceeds-total'));
+  $('agreedCard').classList.toggle('error-frame', c.valid && hasWarning(c, 'agreed-exceeds-remainder'));
 
   /* график */
   $('schedSummary').textContent = 'График платежей (' + c.rows.length + ')';
   $('schedBody').innerHTML = c.valid ? schedRowsHtml(c) : '';
 
-  /* кнопка фиксации (этап 3) */
-  var canFix = appMode === 'unit' && !!selectedUnit && c.valid && c.overflow === 0;
+  /* кнопка фиксации (этап 3): расчёт валиден и без ошибок calc.js */
+  var canFix = appMode === 'unit' && !!selectedUnit && c.valid && c.ok;
   $('fixBtn').disabled = !canFix;
   $('fixBtn').title = canFix ? 'Записать согласованный график в файл продаж'
       : appMode !== 'unit' ? 'Доступно только в режиме «По квартире»'
@@ -749,7 +838,7 @@ function renderPinned() {
     d.innerHTML =
       '<button type="button" class="x" title="Убрать">✕</button>' +
       '<div class="t">' + v.months + ' мес</div>' + payLine +
-      '<div class="m">Взнос: ' + fmtMoney(v.down) + ' (' + fmtPct(v.downPct) + ')</div>' +
+      '<div class="m">Стартовые: ' + fmtMoney(v.down) + ' (' + fmtPct(v.downPct) + ')</div>' +
       '<div class="m">Стоимость: ' + fmtMoney(v.total) + '</div>';
     d.querySelector('.x').onclick = function () { pinned.splice(i, 1); renderPinned(); };
     box.appendChild(d);
@@ -762,10 +851,12 @@ function renderPinned() {
 
 /* ---------- КП ---------- */
 function kpVariantHtml(v, idx) {
-  var modeText = v.equalCount > 0 ? 'равными долями' : 'с финальным платежом';
+  var modeText = v.equalCount > 0
+    ? (v.tail > 0 ? 'платежами по ' + fmtMoney(v.monthly) : 'равными долями')
+    : 'с финальным платежом';
   var figs =
     '<div class="f"><b>' + fmtMoney(v.total) + '</b><span>Стоимость</span></div>' +
-    '<div class="f"><b>' + fmtMoney(v.down) + '</b><span>Взнос (' + fmtPct(v.downPct) + ')</span></div>' +
+    '<div class="f"><b>' + fmtMoney(v.down) + '</b><span>Стартовые (' + fmtPct(v.downPct) + ')</span></div>' +
     '<div class="f"><b>' + v.months + ' мес</b><span>Срок</span></div>' +
     (v.equalCount > 0
       ? '<div class="f"><b class="big-digit">' + fmtMoney(v.monthly) + '</b><span>В месяц</span></div>'
@@ -823,7 +914,7 @@ function buildKP() {
     };
     h += '<table class="kp-cmp"><thead>' + head + '</thead><tbody>' +
       line('Стоимость', function (v) { return fmtMoney(v.total); }) +
-      line('Первый взнос', function (v) { return fmtMoney(v.down) + ' (' + fmtPct(v.downPct) + ')'; }) +
+      line('Стартовые платежи', function (v) { return fmtMoney(v.down) + ' (' + fmtPct(v.downPct) + ')'; }) +
       line('Ежемесячный платёж', function (v) { return v.equalCount > 0 ? fmtMoney(v.monthly) : '—'; }) +
       line('Финальный платёж', function (v) { return v.tail > 0 ? fmtMoney(v.tail) : '—'; }) +
       '</tbody></table>';
@@ -994,6 +1085,23 @@ function setMode(m) {
   recalc();
 }
 
+/* ---------- переключатели режимов расчёта ---------- */
+function setCalcMode(m) {
+  calcMode = m;
+  $('cmTerm').classList.toggle('on', m === 'term');
+  $('cmPay').classList.toggle('on', m === 'payment');
+  $('termBlock').style.display = m === 'term' ? '' : 'none';
+  $('payBlock').style.display = m === 'payment' ? '' : 'none';
+  recalc();
+}
+function setTailMode(m) {
+  tailMode = m;
+  $('tailSeparate').classList.toggle('on', m === 'separate');
+  $('tailMerge').classList.toggle('on', m === 'merge');
+  $('tailLevel').classList.toggle('on', m === 'level');
+  recalc();
+}
+
 /* ---------- этап 3: «Зафиксировать» ---------- */
 function apiFindContract(code, onOk, onErr) {
   if (HAS_GAS) {
@@ -1027,7 +1135,7 @@ function apiFixSchedule(payload, onOk, onErr) {
 
 function startFix() {
   var c = compute();
-  if (!(appMode === 'unit' && selectedUnit && c.valid && c.overflow === 0)) return;
+  if (!(appMode === 'unit' && selectedUnit && c.valid && c.ok)) return;
   $('fixBtn').disabled = true;
   $('fixBtn').textContent = 'Проверка договора…';
   apiFindContract(selectedUnit.code, function (res) {
@@ -1093,12 +1201,13 @@ function renderFixDetails() {
   }
   d += '<div class="fix-kv">График: <b>' + c.rows.length + '</b> платеж(ей), ' + fmtDate(c.rows[0].date) +
     ' — ' + fmtDate(c.rows[c.rows.length - 1].date) + ', итог <b>' + fmtMoney(c.total) + '</b></div>';
-  d += '<div class="fix-kv">Взнос ' + fmtMoney(c.down) + ' · срок ' + c.months + ' мес' +
+  d += '<div class="fix-kv">Стартовые ' + fmtMoney(c.down) + ' · срок ' + c.months + ' мес' +
     (c.equalCount > 0 ? ' · в месяц ' + fmtMoney(c.monthly) : '') +
     (c.tail > 0 ? ' · финальный ' + fmtMoney(c.tail) : '') + '</div>';
-  if (c.badDates.length) {
-    d += '<div class="alert warn">Договорённых платежей вне срока рассрочки: ' + c.badDates.length +
-      ' — будут записаны как есть.</div>';
+  var warnCount = c.warnings.length;
+  if (warnCount) {
+    d += '<div class="alert warn">Предупреждений в расчёте: ' + warnCount +
+      ' (см. под контрольной строкой) — график будет записан как есть.</div>';
   }
   var mgrs = (unitData && unitData.params.managers && unitData.params.managers.length)
       ? unitData.params.managers : [($('mgrName').value || '').trim() || '—'];
@@ -1128,8 +1237,8 @@ function confirmFix() {
     manager: $('fixManager') ? $('fixManager').value : '',
     overwrite: ct.scheduleRows > 0,
     total: c.total,
-    down: c.down,
-    firstDate: dateToInput(c.firstDate),
+    down: c.down,                              /* «ПВ» = сумма стартовых платежей */
+    firstDate: dateToInput(c.firstDate),       /* «Дата 1-го платежа» = якорь серии */
     months: c.months,
     rows: c.rows.map(function (r) { return { date: dateToInput(r.date), sum: r.sum, type: r.type }; })
   };
@@ -1168,14 +1277,9 @@ function confirmFix() {
 }
 
 /* ---------- события ---------- */
-['area', 'price', 'discount', 'down', 'term', 'payDay'].forEach(function (id) {
+['area', 'price', 'discount', 'term', 'mPay', 'anchorDate'].forEach(function (id) {
   $(id).oninput = recalc;
 });
-$('firstDate').oninput = function () {
-  var d = parseDateInput(this.value);
-  if (d) $('payDay').value = d.getDate();   /* число месяца — от даты 1-го платежа, редактируемо */
-  recalc();
-};
 $('discPct').onclick = function () {
   discountType = 'pct';
   this.classList.add('on'); $('discUsd').classList.remove('on');
@@ -1186,6 +1290,8 @@ $('discUsd').onclick = function () {
   this.classList.add('on'); $('discPct').classList.remove('on');
   recalc();
 };
+$('cmTerm').onclick = function () { setCalcMode('term'); };
+$('cmPay').onclick = function () { setCalcMode('payment'); };
 $('modeEqual').onclick = function () {
   restMode = 'equal';
   this.classList.add('on'); $('modeTail').classList.remove('on');
@@ -1196,11 +1302,15 @@ $('modeTail').onclick = function () {
   this.classList.add('on'); $('modeEqual').classList.remove('on');
   recalc();
 };
+$('tailSeparate').onclick = function () { setTailMode('separate'); };
+$('tailMerge').onclick = function () { setTailMode('merge'); };
+$('tailLevel').onclick = function () { setTailMode('level'); };
+$('addStart').onclick = function () { addStartRow(dateToInput(today0()), '', EcoCalc.TYPES.down); };
 $('addAgreed').onclick = function () { addAgreedRow(); };
 $('pinBtn').onclick = function () {
   if (pinned.length >= MAX_PINNED) return;
   var c = compute();
-  if (!c.valid || c.overflow > 0) return;
+  if (!c.valid || !c.ok) return;
   pinned.push(c);
   renderPinned();
 };
@@ -1237,8 +1347,10 @@ $('reloadData').onclick = function () {
 /* ---------- старт ---------- */
 (function init() {
   var t = today0();
-  $('firstDate').value = dateToInput(slotDate(t, 1, t.getDate()));   /* по умолчанию — через месяц */
-  $('payDay').value = t.getDate();
+  /* стартовые: одна строка с сегодняшней датой — простые сделки выглядят как раньше (ТЗ 7.1) */
+  addStartRow(dateToInput(t), '', EcoCalc.TYPES.down);
+  /* якорь серии по умолчанию — через месяц тем же числом (правило 29–31 внутри calc.js) */
+  $('anchorDate').value = dateToInput(EcoCalc.slotDate(t, 1));
   var valid = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 7);
   $('validUntil').value = dateToInput(valid);
   render();
