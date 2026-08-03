@@ -215,7 +215,14 @@
   table.kp-cmp th, table.kp-cmp td { border: 1px solid var(--line); padding: 6px 9px; text-align: right; }
   table.kp-cmp th:first-child, table.kp-cmp td:first-child { text-align: left; color: var(--muted); }
   table.kp-cmp th { background: var(--accent-soft); color: var(--ink); }
-  .kp-var { break-inside: avoid; border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  /* Вариант расчёта может переноситься между страницами: запрет на разрыв
+     означал, что график из двадцати строк не влезал в остаток листа и уходил
+     целиком на следующий. Рвём только по границам строк таблицы, а заголовок
+     и крупные цифры держим вместе с началом графика. */
+  .kp-var { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .kp-var-title, .kp-figs { break-after: avoid; page-break-after: avoid; }
+  table.sched-t tr { break-inside: avoid; page-break-inside: avoid; }
+  table.sched-t thead { display: table-header-group; }   /* шапка повторяется на каждой странице */
   .kp-var-title { font-weight: 800; color: var(--accent); margin-bottom: 8px; font-size: 14px; }
   .kp-figs { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 8px; }
   .kp-figs .f b { display: block; font-size: 16px; }
@@ -225,9 +232,11 @@
   .kp-valid { font-weight: 800; color: var(--danger); }
   .kp-note { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
 
-  /* Планировка — отдельным листом после расчёта: сначала цифры, потом квартира.
-     Лист печатается только когда квартира выбрана в режиме «По квартире». */
-  .kp-plan { break-before: page; page-break-before: always; padding-top: 8mm; }
+  /* Планировка идёт сразу после сведений о квартире — на первой странице.
+     Отдельным листом её ставить не стоило: график с двумя десятками строк
+     не помещался в остаток страницы и уезжал целиком на следующую, оставляя
+     половину первой пустой. Теперь место занято тем, ради чего КП и печатают. */
+  .kp-plan { margin: 14px 0 16px; break-inside: avoid; }
   .kp-plan-head {
     display: flex; justify-content: space-between; align-items: baseline;
     border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-bottom: 12px;
@@ -908,6 +917,10 @@ function buildKP() {
     h += '<div class="kp-avail">Наличие квартиры на дату сделки уточняйте у менеджера — расчёт не является бронированием.</div>';
   }
 
+  /* Планировка — сразу под сведениями о квартире, на первой странице:
+     сначала клиент видит, что покупает, дальше идут условия. */
+  h += planPageHtml(unit);
+
   if (variants.length > 1) {
     var head = '<tr><th>Параметр</th>' + variants.map(function (v, i) {
       return '<th>Вариант ' + (i + 1) + ' · ' + v.months + ' мес</th>';
@@ -931,8 +944,6 @@ function buildKP() {
     '</div>' +
     '<div class="kp-note">Предварительный расчёт: параметры квартиры и цена уточняются при бронировании. ' +
     'Не является публичной офертой. Финальную цену сделки утверждает застройщик.</div>';
-
-  h += planPageHtml(unit);
 
   $('kp').innerHTML = h;
 }
