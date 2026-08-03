@@ -225,6 +225,29 @@
   .kp-valid { font-weight: 800; color: var(--danger); }
   .kp-note { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
 
+  /* Планировка — отдельным листом после расчёта: сначала цифры, потом квартира.
+     Лист печатается только когда квартира выбрана в режиме «По квартире». */
+  .kp-plan { break-before: page; page-break-before: always; padding-top: 8mm; }
+  .kp-plan-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-bottom: 12px;
+  }
+  .kp-plan-head .t { font-size: 17px; font-weight: 800; color: var(--accent); }
+  .kp-plan-head .s { color: var(--muted); font-size: 12.5px; }
+  .kp-plan img {
+    width: 100%; height: auto; display: block;
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  .kp-plan-rooms {
+    display: flex; flex-wrap: wrap; gap: 4px 22px;
+    margin-top: 10px; font-size: 12.5px;
+  }
+  .kp-plan-rooms span { color: var(--muted); }
+  .kp-plan-rooms b { color: var(--ink); font-weight: 600; }
+
+  /* На телефонной вёрстке планировка тоже с новой страницы, но уже колонкой */
+  body.print-phone .kp-plan-rooms { gap: 3px 14px; font-size: 12px; }
+
   /* телефонная вёрстка КП: одна колонка, крупные цифры */
   body.print-phone #kp { max-width: 118mm; margin: 0 auto; font-size: 15px; }
   body.print-phone .kp-head { flex-direction: column; gap: 6px; }
@@ -393,6 +416,7 @@
 <div id="kp"></div>
 
 <script src="apartments.js"></script>
+<script src="plans.js"></script>
 <script src="calc.js"></script>
 <script>
 'use strict';
@@ -811,6 +835,40 @@ function kpVariantHtml(v, idx) {
     '<tbody>' + schedRowsHtml(v) + '</tbody></table>' +
     '</div>';
 }
+/**
+ * Лист с планировкой — последняя страница КП.
+ *
+ * Клиент видит не только цифры, но и саму квартиру: планировку, метраж комнат,
+ * расположение на этаже. Лист появляется, только если квартира выбрана в режиме
+ * «По квартире» — в «Прикидке» показывать нечего.
+ *
+ * Планировка ищется по подъезду и площади (см. plans.js): номер квартиры для
+ * этого не годится — в справочнике номера сквозные по дому, а в каталоге это
+ * номера на этаже.
+ */
+function planPageHtml(unit) {
+  if (!unit || typeof window.APT_PLANS !== 'object') return '';
+
+  var plan = window.APT_PLANS.find(unit.entrance, unit.area);
+  if (!plan) return '';
+
+  var rooms = (plan.spaces || []).map(function (s) {
+    return '<span>' + s.n + ' <b>' + s.a.toLocaleString('ru-RU') + ' м²</b></span>';
+  }).join('');
+
+  return '<div class="kp-plan">' +
+    '<div class="kp-plan-head">' +
+      '<div class="t">Квартира № ' + unit.num + ' · ' + plan.rooms + '-комнатная · ' +
+        fmtArea(unit.area) + ' м²</div>' +
+      '<div class="s">подъезд ' + unit.entrance + ' · этаж ' + unit.floor + '</div>' +
+    '</div>' +
+    '<img src="' + plan.file + '" alt="Планировка квартиры № ' + unit.num + '">' +
+    (rooms ? '<div class="kp-plan-rooms">' + rooms + '</div>' : '') +
+    '<div class="kp-note">Планировка приведена по каталогу комплекса. ' +
+    'Расстановка мебели показана для примера и в стоимость не входит.</div>' +
+    '</div>';
+}
+
 function buildKP() {
   var cur = compute();
   var variants = pinned.length ? pinned : [cur];
@@ -873,6 +931,8 @@ function buildKP() {
     '</div>' +
     '<div class="kp-note">Предварительный расчёт: параметры квартиры и цена уточняются при бронировании. ' +
     'Не является публичной офертой. Финальную цену сделки утверждает застройщик.</div>';
+
+  h += planPageHtml(unit);
 
   $('kp').innerHTML = h;
 }

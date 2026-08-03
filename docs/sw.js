@@ -5,7 +5,7 @@
  * ПРИ ЛЮБОМ ОБНОВЛЕНИИ ФАЙЛОВ (apartments.js, index.html…) поднимите номер
  * CACHE_VERSION на единицу — телефоны заметят новую версию и обновят кэш.
  */
-var CACHE_VERSION = 3;
+var CACHE_VERSION = 4;
 var CACHE_NAME = 'eco-city-aini-calc-v' + CACHE_VERSION;
 
 var ASSETS = [
@@ -13,10 +13,30 @@ var ASSETS = [
   'index.html',
   'calc.js',
   'apartments.js',
+  'plans.js',
   'manifest.json',
   'icon-192.png',
   'icon-512.png',
-  'icon-180.png'
+  'icon-180.png',
+
+  /* Планировки квартир: они попадают в КП и должны открываться без интернета —
+     менеджер показывает расчёт на объекте, где связи может не быть. */
+  'plans/kv-01.jpg',
+  'plans/kv-02.jpg',
+  'plans/kv-03.jpg',
+  'plans/kv-04.jpg',
+  'plans/kv-05.jpg',
+  'plans/kv-06.jpg',
+  'plans/kv-07.jpg',
+  'plans/kv-08.jpg',
+  'plans/kv-09.jpg',
+  'plans/kv-10.jpg',
+  'plans/kv-11.jpg',
+  'plans/kv-12.jpg',
+  'plans/kv-13.jpg',
+  'plans/kv-14.jpg',
+  'plans/kv-15.jpg',
+  'plans/kv-16.jpg'
 ];
 
 self.addEventListener('install', function (e) {
