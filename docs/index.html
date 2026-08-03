@@ -947,11 +947,45 @@ function buildKP() {
 
   $('kp').innerHTML = h;
 }
+/**
+ * Дождаться, пока картинки в предложении действительно загрузятся.
+ *
+ * Планировка подставляется в скрытый блок, и браузер берётся за неё не сразу.
+ * Печать же запускалась в ту же миллисекунду — в готовый файл попадало пустое
+ * место вместо планировки. Ждём загрузки, но не бесконечно: если картинка не
+ * открылась за три секунды, печатаем без неё, чтобы кнопка не «зависала».
+ */
+function waitForImages(root, timeoutMs) {
+  var images = Array.prototype.slice.call(root.querySelectorAll('img'));
+  var pending = images.filter(function (im) { return !(im.complete && im.naturalWidth > 0); });
+  if (!pending.length) return Promise.resolve();
+
+  return new Promise(function (resolve) {
+    var left = pending.length;
+    var done = false;
+    var finish = function () { if (!done) { done = true; resolve(); } };
+
+    pending.forEach(function (im) {
+      var next = function () { if (--left <= 0) finish(); };
+      im.addEventListener('load', next, { once: true });
+      im.addEventListener('error', next, { once: true });
+    });
+    setTimeout(finish, timeoutMs || 3000);
+  });
+}
+
 function printKP(layout) {
   buildKP();
   document.body.classList.add(layout === 'phone' ? 'print-phone' : 'print-a4');
-  window.print();
-  setTimeout(function () { document.body.classList.remove('print-a4', 'print-phone'); }, 500);
+
+  var btns = [$('printA4'), $('printPhone')];
+  btns.forEach(function (b) { b.disabled = true; });
+
+  waitForImages($('kp')).then(function () {
+    btns.forEach(function (b) { b.disabled = false; });
+    window.print();
+    setTimeout(function () { document.body.classList.remove('print-a4', 'print-phone'); }, 500);
+  });
 }
 window.onafterprint = function () { document.body.classList.remove('print-a4', 'print-phone'); };
 
@@ -1007,6 +1041,15 @@ function applyUnit(u) {
   $('area').value = u.area;
   $('unitInfo').innerHTML = 'Код: ' + u.code + ' · подъезд ' + u.entrance + ' · этаж ' + u.floor +
     ' · ' + u.rooms + '-комн · ' + fmtArea(u.area) + ' м²';
+
+  /* Планировку начинаем загружать сразу при выборе квартиры, а не в момент
+     печати: к тому времени, как менеджер закончит расчёт, картинка уже готова
+     и предложение печатается без ожидания. */
+  if (typeof window.APT_PLANS === 'object') {
+    var plan = window.APT_PLANS.find(u.entrance, u.area);
+    if (plan) { var pre = new Image(); pre.src = plan.file; }
+  }
+
   recalc();
 }
 
