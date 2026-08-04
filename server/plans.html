@@ -1,0 +1,97 @@
+<!-- Планировки квартир в КП — дополнение к Index (подключается в конце: include('plans')).
+     Данные планировок НЕ дублируются в проекте: скрипт-тег ниже подгружает
+     справочник APT_PLANS офлайн-версии с GitHub Pages (docs/plans.js).
+     Один источник на обе версии: обновили каталог в репозитории —
+     онлайн-версия подтянула сама, Apps Script не трогаем. -->
+<style>
+  .kp-plan { margin: 14px 0 16px; break-inside: avoid; }
+  .kp-plan-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-bottom: 12px; }
+  .kp-plan-head .t { font-size: 17px; font-weight: 800; color: var(--accent); }
+  .kp-plan-head .s { color: var(--muted); font-size: 12.5px; }
+  .kp-plan img { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 6px; }
+  .kp-plan-rooms { display: flex; flex-wrap: wrap; gap: 4px 22px; margin-top: 10px; font-size: 12.5px; }
+  .kp-plan-rooms span { color: var(--muted); }
+  .kp-plan-rooms b { color: var(--ink); font-weight: 600; }
+  body.print-phone .kp-plan-rooms { gap: 3px 14px; font-size: 12px; }
+</style>
+<script src="https://eralmaz-art.github.io/eco-city-calc/plans.js"></script>
+<script>
+'use strict';
+
+/* База картинок и планировок — офлайн-версия на GitHub Pages. */
+var PLANS_SITE = 'https://eralmaz-art.github.io/eco-city-calc/';
+
+function findPlan(u) {
+  if (!u) return null;
+  if (typeof window.APT_PLANS !== 'object') return null;
+  return window.APT_PLANS.find(u.entrance, u.area);
+}
+
+/* Лист планировки: метраж комнат и картинка. Только в режиме «По квартире». */
+function planPageHtml(unit) {
+  var plan = findPlan(unit);
+  if (!plan) return '';
+  var rooms = (plan.spaces || []).map(function (s) {
+    return '<span>' + s.n + ' <b>' + s.a.toLocaleString('ru-RU') + ' м²</b></span>';
+  }).join('');
+  var head = 'Квартира № ' + unit.num + ' · ' + plan.rooms + '-комнатная · ';
+  head += unit.area.toLocaleString('ru-RU') + ' м²';
+  var h = '<div class="kp-plan">';
+  h += '<div class="kp-plan-head"><div class="t">' + head + '</div>';
+  h += '<div class="s">подъезд ' + unit.entrance + ' · этаж ' + unit.floor + '</div></div>';
+  h += '<img src="' + PLANS_SITE + plan.file + '" alt="Планировка">';
+  if (rooms) h += '<div class="kp-plan-rooms">' + rooms + '</div>';
+  h += '<div class="kp-note">Планировка приведена по каталогу комплекса. ';
+  h += 'Расстановка мебели показана для примера и в стоимость не входит.</div>';
+  h += '</div>';
+  return h;
+}
+
+/* Планировка — сразу под сведениями о квартире, на первой странице КП. */
+var buildKPBase = buildKP;
+buildKP = function () {
+  buildKPBase();
+  var html = planPageHtml(appMode === 'unit' ? selectedUnit : null);
+  if (!html) return;
+  var obj = $('kp').querySelector('.kp-obj');
+  if (obj) obj.insertAdjacentHTML('afterend', html);
+};
+
+/* Печать ждёт загрузки картинок (лимит 3 с) — иначе в PDF пустое место. */
+function waitForImages(root) {
+  var images = Array.prototype.slice.call(root.querySelectorAll('img'));
+  var pending = images.filter(function (im) { return !(im.complete && im.naturalWidth > 0); });
+  if (!pending.length) return Promise.resolve();
+  return new Promise(function (resolve) {
+    var left = pending.length;
+    var done = false;
+    var finish = function () { if (!done) { done = true; resolve(); } };
+    pending.forEach(function (im) {
+      var next = function () { left -= 1; if (left <= 0) finish(); };
+      im.addEventListener('load', next, { once: true });
+      im.addEventListener('error', next, { once: true });
+    });
+    setTimeout(finish, 3000);
+  });
+}
+
+printKP = function (layout) {
+  buildKP();
+  document.body.classList.add(layout === 'phone' ? 'print-phone' : 'print-a4');
+  var btns = [$('printA4'), $('printPhone')];
+  btns.forEach(function (b) { b.disabled = true; });
+  waitForImages($('kp')).then(function () {
+    btns.forEach(function (b) { b.disabled = false; });
+    window.print();
+    setTimeout(function () { document.body.classList.remove('print-a4', 'print-phone'); }, 500);
+  });
+};
+
+/* Предзагрузка картинки при выборе квартиры — к печати она уже в кэше. */
+var applyUnitBase = applyUnit;
+applyUnit = function (u) {
+  applyUnitBase(u);
+  var plan = findPlan(u);
+  if (plan) { (new Image()).src = PLANS_SITE + plan.file; }
+};
+</script>
