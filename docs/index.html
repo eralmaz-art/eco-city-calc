@@ -188,9 +188,12 @@
   @media print {
     body { background: #fff; padding: 0; }
     header.topbar, main.app { display: none !important; }
-    #kp { display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    #kp { display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 12mm; }
   }
-  @page { size: A4; margin: 12mm; }
+  /* Поля листа задаёт сам КП (padding выше), а поля страницы — нулевые:
+     в полях браузер печатает колонтитулы с адресом сайта, клиентам в КП
+     они не нужны. При нулевых полях колонтитулы не выводятся вовсе. */
+  @page { size: A4; margin: 0; }
 
   #kp { color: var(--ink); font-size: 13px; }
   .kp-head { display: flex; justify-content: space-between; align-items: flex-start;

@@ -13,6 +13,12 @@
   .kp-plan-rooms span { color: var(--muted); }
   .kp-plan-rooms b { color: var(--ink); font-weight: 600; }
   body.print-phone .kp-plan-rooms { gap: 3px 14px; font-size: 12px; }
+  /* Поля листа — в самом КП, поля страницы — нулевые: в полях браузер печатает
+     колонтитулы с адресом script.google.com, клиентам в КП они не нужны.
+     При нулевых полях колонтитулы не выводятся вовсе. Это правило позже
+     правила Index и потому побеждает. */
+  @page { size: A4; margin: 0; }
+  @media print { #kp { padding: 12mm; } }
 </style>
 <script src="https://eralmaz-art.github.io/eco-city-calc/plans.js"></script>
 <script>
