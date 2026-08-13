@@ -100,4 +100,54 @@ applyUnit = function (u) {
   var plan = findPlan(u);
   if (plan) { (new Image()).src = PLANS_SITE + plan.file; }
 };
+
+/* «Отправить в WhatsApp» — текстовая сводка расчёта готовым сообщением.
+   Кнопка PDF переименована: она даёт узкий файл под телефон, а не отправку. */
+function waSummary() {
+  var cur = compute();
+  var variants = pinned.length ? pinned : [cur];
+  var L = [];
+  L.push('*ЖК «ЭКО СИТИ АЙНИ»* — предварительный расчёт');
+  var client = ($('clientName').value || '').trim();
+  if (client) L.push('Для: ' + client);
+  var u = (appMode === 'unit' && selectedUnit) ? selectedUnit : null;
+  if (u) {
+    L.push('Квартира № ' + u.num + ' · подъезд ' + u.entrance +
+      ' · этаж ' + u.floor + ' · ' + u.rooms + '-комн · ' + cur.area.toLocaleString('ru-RU') + ' м²');
+  } else {
+    L.push('Квартира ' + cur.area.toLocaleString('ru-RU') + ' м²');
+  }
+  L.push('Цена: ' + fmtMoney(cur.price) + ' за м²');
+  if (cur.discount > 0) {
+    L.push('Стоимость: ' + fmtMoney(cur.base) + ' → *' + fmtMoney(cur.total) + '* (выгода ' + fmtMoney(cur.discount) + ')');
+  } else {
+    L.push('Стоимость: *' + fmtMoney(cur.total) + '*');
+  }
+  variants.forEach(function (v, i) {
+    L.push('');
+    L.push('*Вариант ' + (i + 1) + ' — ' + v.months + ' мес*');
+    L.push('Стартовые: ' + fmtMoney(v.down) + ' (' + fmtPct(v.downPct) + ')');
+    if (v.equalCount > 0) L.push('Ежемесячно: *' + fmtMoney(v.monthly) + '*');
+    if (v.tail > 0) L.push('Финальный платёж: ' + fmtMoney(v.tail));
+  });
+  L.push('');
+  var mgr = ($('mgrName').value || '').trim();
+  var phone = ($('mgrPhone').value || '').trim();
+  if (mgr || phone) L.push('Ваш менеджер: ' + [mgr, phone].filter(Boolean).join(' · '));
+  var valid = parseDateInput($('validUntil').value);
+  if (valid) L.push('Расчёт действителен до ' + fmtDate(valid));
+  L.push('Предварительный расчёт — не является публичной офертой.');
+  return L.join('\n');
+}
+
+$('printPhone').textContent = 'PDF — телефон';
+var waBtn = document.createElement('button');
+waBtn.type = 'button';
+waBtn.className = 'btn ghost';
+waBtn.id = 'waShare';
+waBtn.textContent = 'Отправить в WhatsApp';
+$('printPhone').insertAdjacentElement('afterend', waBtn);
+waBtn.onclick = function () {
+  window.open('https://wa.me/?text=' + encodeURIComponent(waSummary()), '_blank');
+};
 </script>

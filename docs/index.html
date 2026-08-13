@@ -417,7 +417,8 @@
       </label>
       <div class="kp-actions">
         <button type="button" class="btn" id="printA4">Печать / PDF — А4</button>
-        <button type="button" class="btn ghost" id="printPhone">PDF для WhatsApp — телефон</button>
+        <button type="button" class="btn ghost" id="printPhone">PDF — телефон</button>
+        <button type="button" class="btn ghost" id="waShare">Отправить в WhatsApp</button>
       </div>
       <div class="hint">Офлайн-версия: фиксация графика и бронь выполняются только в основной системе.</div>
     </div>
@@ -1139,6 +1140,48 @@ $('pinBtn').onclick = function () {
 };
 $('printA4').onclick = function () { printKP('a4'); };
 $('printPhone').onclick = function () { printKP('phone'); };
+
+/* «Отправить в WhatsApp» — текстовая сводка расчёта готовым сообщением.
+   PDF в один клик не отправить (нужен тяжёлый генератор в офлайн-кэше),
+   а цифры клиенту чаще нужны сразу; файл менеджер прикладывает следом. */
+function waSummary() {
+  var cur = compute();
+  var variants = pinned.length ? pinned : [cur];
+  var L = [];
+  L.push('*ЖК «ЭКО СИТИ АЙНИ»* — предварительный расчёт');
+  var client = ($('clientName').value || '').trim();
+  if (client) L.push('Для: ' + client);
+  if (cur.unit) {
+    L.push('Квартира № ' + cur.unit.num + ' · подъезд ' + cur.unit.entrance +
+      ' · этаж ' + cur.unit.floor + ' · ' + cur.unit.rooms + '-комн · ' + fmtArea(cur.area) + ' м²');
+  } else {
+    L.push('Квартира ' + fmtArea(cur.area) + ' м²');
+  }
+  L.push('Цена: ' + fmtMoney(cur.price) + ' за м²');
+  if (cur.discount > 0) {
+    L.push('Стоимость: ' + fmtMoney(cur.base) + ' → *' + fmtMoney(cur.total) + '* (выгода ' + fmtMoney(cur.discount) + ')');
+  } else {
+    L.push('Стоимость: *' + fmtMoney(cur.total) + '*');
+  }
+  variants.forEach(function (v, i) {
+    L.push('');
+    L.push('*Вариант ' + (i + 1) + ' — ' + v.months + ' мес*');
+    L.push('Стартовые: ' + fmtMoney(v.down) + ' (' + fmtPct(v.downPct) + ')');
+    if (v.equalCount > 0) L.push('Ежемесячно: *' + fmtMoney(v.monthly) + '*');
+    if (v.tail > 0) L.push('Финальный платёж: ' + fmtMoney(v.tail));
+  });
+  L.push('');
+  var mgr = ($('mgrName').value || '').trim();
+  var phone = ($('mgrPhone').value || '').trim();
+  if (mgr || phone) L.push('Ваш менеджер: ' + [mgr, phone].filter(Boolean).join(' · '));
+  var valid = parseDateInput($('validUntil').value);
+  if (valid) L.push('Расчёт действителен до ' + fmtDate(valid));
+  L.push('Предварительный расчёт — не является публичной офертой.');
+  return L.join('\n');
+}
+$('waShare').onclick = function () {
+  window.open('https://wa.me/?text=' + encodeURIComponent(waSummary()), '_blank');
+};
 
 $('mEstimate').onclick = function () { setMode('estimate'); };
 $('mUnit').onclick = function () { setMode('unit'); };
