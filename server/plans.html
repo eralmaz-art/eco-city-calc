@@ -150,4 +150,10 @@ $('printPhone').insertAdjacentElement('afterend', waBtn);
 waBtn.onclick = function () {
   window.open('https://wa.me/?text=' + encodeURIComponent(waSummary()), '_blank');
 };
+
+/* Номер версии онлайн-калькулятора в шапке. ПОДНИМАТЬ при каждом деплое —
+   номер должен совпадать с номером версии развёртывания в Apps Script. */
+var ONLINE_VERSION = 8;
+var brandSmall = document.querySelector('.brand small');
+if (brandSmall) { brandSmall.textContent += ' · версия ' + ONLINE_VERSION; }
 </script>

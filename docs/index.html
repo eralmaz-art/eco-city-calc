@@ -271,7 +271,7 @@
 <body>
 
 <header class="topbar">
-  <div class="brand">ЖК «Эко Сити Айни» <small>· Калькулятор рассрочки · офлайн</small></div>
+  <div class="brand">ЖК «Эко Сити Айни» <small>· Калькулятор рассрочки · офлайн<span id="verBadge"></span></small></div>
   <div class="toggle">
     <button type="button" id="mEstimate" class="on">Прикидка</button>
     <button type="button" id="mUnit">По квартире</button>
@@ -1182,6 +1182,13 @@ function waSummary() {
 $('waShare').onclick = function () {
   window.open('https://wa.me/?text=' + encodeURIComponent(waSummary()), '_blank');
 };
+
+/* Номер версии в шапке. ПОДНИМАТЬ ВМЕСТЕ с CACHE_VERSION в sw.js (одним
+   коммитом): index.html и кэш приезжают на телефон одним пакетом, поэтому
+   цифра в шапке всегда показывает фактически установленную версию —
+   сразу видно, подтянул ли телефон обновление. */
+var APP_VERSION = 11;
+$('verBadge').textContent = ' · версия ' + APP_VERSION;
 
 $('mEstimate').onclick = function () { setMode('estimate'); };
 $('mUnit').onclick = function () { setMode('unit'); };
