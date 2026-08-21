@@ -107,7 +107,14 @@
   .term-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
 
   /* стартовые платежи */
-  .start-row { display: grid; grid-template-columns: 1fr .8fr 1.25fr 34px; gap: 8px; margin-bottom: 8px; }
+  /* Строка стартового платежа — flex с переносом: каждому полю задана
+     минимальная ширина, при нехватке места поле само уходит на новую строку.
+     Так подписи не режутся ни на телефоне, ни в узком окне ноутбука. */
+  .start-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .start-row .st-date { flex: 1 1 150px; min-width: 150px; }
+  .start-row .st-sum  { flex: 1 1 110px; min-width: 110px; }
+  .start-row .st-type { flex: 2 1 150px; min-width: 150px; }
+  .start-row button   { flex: 0 0 34px; }
   .start-row button {
     border: 1px solid var(--line); background: #fff; border-radius: 9px; cursor: pointer;
     color: var(--danger); font-size: 16px;
@@ -130,16 +137,13 @@
   .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
 
   /* режим «По квартире» */
-  .row3 { display: grid; grid-template-columns: 1fr 1fr 1.6fr; gap: 8px; }
-  /* Узкий экран (телефон): селекты и строки стартовых платежей в два ряда —
-     иначе подписи в ячейках режутся («Подъезд 2», «Первоначальный взнос»). */
-  @media (max-width: 560px) {
-    .row3 { grid-template-columns: 1fr 1fr; }
-    .row3 label:nth-child(3) { grid-column: 1 / -1; }
-    .start-row { grid-template-columns: 1fr 1fr 34px; }
-    .start-row .st-type { grid-column: 1 / 3; }
-    .start-row button { grid-row: 1; grid-column: 3; }
-  }
+  /* Подъезд / этаж / квартира — тоже flex с переносом: подъезд и этаж по 130px
+     минимум, квартира шире (в ней длинная подпись) и при нехватке места
+     уходит на отдельную строку во всю ширину. */
+  .row3 { display: flex; flex-wrap: wrap; gap: 8px; }
+  .row3 > label { flex: 1 1 130px; min-width: 130px; margin-bottom: 0; }
+  .row3 > label:nth-child(3) { flex: 3 1 230px; min-width: 230px; }
+  .row3 select, .row3 input { width: 100%; }
   select {
     width: 100%; padding: 9px 8px; font-size: 15px; color: var(--ink);
     border: 1px solid var(--line); border-radius: 9px; background: #fff;
@@ -502,7 +506,7 @@ function addStartRow(dateVal, sumVal, typeVal) {
   var row = document.createElement('div');
   row.className = 'start-row';
   var options = EcoCalc.START_PAYMENT_TYPES.map(function (t) {
-    var short = t === 'Первоначальный взнос' ? 'Первонач. взнос' : t;   // в узкой ячейке полное не помещается
+    var short = t === 'Первоначальный взнос' ? 'Перв. взнос' : t;   // в узкой ячейке полное не помещается
     return '<option value="' + t + '"' + (t === typeVal ? ' selected' : '') + '>' + short + '</option>';
   }).join('');
   row.innerHTML =
@@ -1222,7 +1226,7 @@ $('waShare').onclick = function () {
    коммитом): index.html и кэш приезжают на телефон одним пакетом, поэтому
    цифра в шапке всегда показывает фактически установленную версию —
    сразу видно, подтянул ли телефон обновление. */
-var APP_VERSION = 12;
+var APP_VERSION = 13;
 $('verBadge').textContent = ' · версия ' + APP_VERSION;
 
 $('mEstimate').onclick = function () { setMode('estimate'); };
@@ -1271,6 +1275,16 @@ window.addEventListener('pageshow', function () { $('clientName').value = ''; })
   /* офлайн-работа после первой загрузки */
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js');
+    /* Новая версия приложения забирает управление (skipWaiting + claim в sw.js),
+       но уже открытая страница остаётся старой до следующего запуска. Перезагружаем
+       её сами — один раз, только при реальной смене версии: менеджеру не нужно
+       помнить «закрыть и открыть заново». */
+    var reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (reloading) return;
+      reloading = true;
+      if (navigator.serviceWorker.controller) location.reload();
+    });
   }
 })();
 </script>
