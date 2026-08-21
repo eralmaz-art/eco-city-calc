@@ -11,21 +11,58 @@
  **********************************************************************/
 
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('⚙ Сервис')
-    .addItem('Настроить защиту', 'НАСТРОИТЬ_ЗАЩИТУ')
-    .addItem('Снять всю защиту', 'СНЯТЬ_ВСЮ_ЗАЩИТУ')
-    .addToUi();
+  var ui = SpreadsheetApp.getUi();
 
-  SpreadsheetApp.getUi()
-    .createMenu('📄 ДДУ')
+  ui.createMenu('📄 ДДУ')
     .addItem('Сгенерировать договор', 'СГЕНЕРИРОВАТЬ_ДДУ')
     .addToUi();
+
+  // Защиту трогает только владелец — менеджерам меню не показываем.
+  // Если в простом триггере владельца определить не удалось (null) — меню покажем,
+  // но сами функции всё равно откажут чужому аккаунту.
+  if (ЭТО_ВЛАДЕЛЕЦ_() !== false) {
+    ui.createMenu('⚙ Сервис')
+      .addItem('Настроить защиту', 'НАСТРОИТЬ_ЗАЩИТУ')
+      .addItem('Снять всю защиту', 'СНЯТЬ_ВСЮ_ЗАЩИТУ')
+      .addToUi();
+  }
+}
+
+// Резервная сверка на случай, если getOwner() недоступен (простой триггер).
+// При смене владельца файла обновить здесь почту.
+var ВЛАДЕЛЕЦ_EMAIL = 'eralmaz@gmail.com';
+
+/* Владелец ли тот, кто сейчас работает с файлом.
+   true — владелец, false — точно нет, null — определить не удалось. */
+function ЭТО_ВЛАДЕЛЕЦ_() {
+  var me = '';
+  try { me = String(Session.getEffectiveUser().getEmail() || ''); } catch (e) {}
+  if (!me) return null;
+
+  // Основной способ — спросить владельца у самого файла
+  try {
+    var owner = SpreadsheetApp.getActiveSpreadsheet().getOwner();
+    if (owner && owner.getEmail()) return owner.getEmail() === me;
+  } catch (e) {}
+
+  return me === ВЛАДЕЛЕЦ_EMAIL;
+}
+
+/* Пускает дальше только владельца. Вызывается из функций меню,
+   где авторизация полная и владелец читается надёжно. */
+function ТОЛЬКО_ВЛАДЕЛЕЦ_() {
+  if (ЭТО_ВЛАДЕЛЕЦ_() === true) return true;
+  SpreadsheetApp.getUi().alert(
+    'Управление защитой листов доступно только владельцу файла.\n\n' +
+    'Если нужно изменить защиту — обратитесь к руководителю.');
+  return false;
 }
 
 /*============================ ЗАЩИТА ================================*/
 
 function НАСТРОИТЬ_ЗАЩИТУ() {
+  if (!ТОЛЬКО_ВЛАДЕЛЕЦ_()) return;
+
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var log = [];
 
@@ -71,6 +108,9 @@ function НАСТРОИТЬ_ЗАЩИТУ() {
 }
 
 function СНЯТЬ_ВСЮ_ЗАЩИТУ(silent) {
+  // silent === true — вызов изнутри НАСТРОИТЬ_ЗАЩИТУ, владелец уже проверен
+  if (silent !== true && !ТОЛЬКО_ВЛАДЕЛЕЦ_()) return;
+
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   [SpreadsheetApp.ProtectionType.SHEET, SpreadsheetApp.ProtectionType.RANGE]
     .forEach(function (type) {
