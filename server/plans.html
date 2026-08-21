@@ -117,7 +117,11 @@ function waSummary() {
   } else {
     L.push('Квартира ' + cur.area.toLocaleString('ru-RU') + ' м²');
   }
-  L.push('Цена: ' + fmtMoney(cur.price) + ' за м²');
+  if (cur.ppm) {
+    L.push('Цена: ~' + fmtMoney(cur.price) + '~ → *' + fmtMoney(cur.priceNet) + '* за м² (скидка ' + fmtMoney(cur.ppm) + ' с м²)');
+  } else {
+    L.push('Цена: ' + fmtMoney(cur.price) + ' за м²');
+  }
   if (cur.discount > 0) {
     L.push('Стоимость: ' + fmtMoney(cur.base) + ' → *' + fmtMoney(cur.total) + '* (выгода ' + fmtMoney(cur.discount) + ')');
   } else {
@@ -153,7 +157,7 @@ waBtn.onclick = function () {
 
 /* Номер версии онлайн-калькулятора в шапке. ПОДНИМАТЬ при каждом деплое —
    номер должен совпадать с номером версии развёртывания в Apps Script. */
-var ONLINE_VERSION = 11;
+var ONLINE_VERSION = 12;
 var brandSmall = document.querySelector('.brand small');
 if (brandSmall) { brandSmall.textContent += ' · версия ' + ONLINE_VERSION; }
 </script>

@@ -84,6 +84,7 @@
     border: 0; background: #fff; padding: 9px 14px; font-size: 15px; cursor: pointer; color: var(--muted);
   }
   .toggle button.on { background: var(--accent); color: #fff; font-weight: 700; }
+  .toggle button { white-space: nowrap; }
 
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chips button {
@@ -106,7 +107,7 @@
   .term-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
 
   /* стартовые платежи */
-  .start-row { display: grid; grid-template-columns: 1.15fr .9fr 1fr 34px; gap: 8px; margin-bottom: 8px; }
+  .start-row { display: grid; grid-template-columns: 1fr .8fr 1.25fr 34px; gap: 8px; margin-bottom: 8px; }
   .start-row button {
     border: 1px solid var(--line); background: #fff; border-radius: 9px; cursor: pointer;
     color: var(--danger); font-size: 16px;
@@ -130,6 +131,15 @@
 
   /* режим «По квартире» */
   .row3 { display: grid; grid-template-columns: 1fr 1fr 1.6fr; gap: 8px; }
+  /* Узкий экран (телефон): селекты и строки стартовых платежей в два ряда —
+     иначе подписи в ячейках режутся («Подъезд 2», «Первоначальный взнос»). */
+  @media (max-width: 560px) {
+    .row3 { grid-template-columns: 1fr 1fr; }
+    .row3 label:nth-child(3) { grid-column: 1 / -1; }
+    .start-row { grid-template-columns: 1fr 1fr 34px; }
+    .start-row .st-type { grid-column: 1 / 3; }
+    .start-row button { grid-row: 1; grid-column: 3; }
+  }
   select {
     width: 100%; padding: 9px 8px; font-size: 15px; color: var(--ink);
     border: 1px solid var(--line); border-radius: 9px; background: #fff;
@@ -311,6 +321,7 @@
         <div class="toggle">
           <button type="button" id="discPct" class="on">%</button>
           <button type="button" id="discUsd">$</button>
+          <button type="button" id="discPpm">$/м²</button>
         </div>
       </div>
       <div class="price-view" id="priceView"></div>
@@ -443,7 +454,7 @@ var MAX_MONTHS = 36;
 
 var $ = function (id) { return document.getElementById(id); };
 
-var discountType = 'pct';   // 'pct' | 'usd'
+var discountType = 'pct';   // 'pct' (% от стоимости) | 'usd' ($ от стоимости) | 'ppm' ($ с каждого м²)
 var calcMode = 'term';      // 'term' («От срока») | 'payment' («От платежа»)
 var restMode = 'equal';     // 'equal' | 'tail' — режим «От срока»
 var tailMode = 'separate';  // 'separate' | 'merge' | 'level' — режим «От платежа»
@@ -491,7 +502,8 @@ function addStartRow(dateVal, sumVal, typeVal) {
   var row = document.createElement('div');
   row.className = 'start-row';
   var options = EcoCalc.START_PAYMENT_TYPES.map(function (t) {
-    return '<option value="' + t + '"' + (t === typeVal ? ' selected' : '') + '>' + t + '</option>';
+    var short = t === 'Первоначальный взнос' ? 'Первонач. взнос' : t;   // в узкой ячейке полное не помещается
+    return '<option value="' + t + '"' + (t === typeVal ? ' selected' : '') + '>' + short + '</option>';
   }).join('');
   row.innerHTML =
     '<input type="date" class="st-date">' +
@@ -579,9 +591,15 @@ function compute() {
   var discVal = +$('discount').value || 0;
 
   var base = Math.round(area * price);
-  var discount = discountType === 'pct' ? Math.round(base * discVal / 100) : Math.round(discVal);
+  /* скидка с метра: $/м² × площадь — для клиента это «было 1500 → стало 1400 за м²»,
+     для графика — та же абсолютная сумма; математика рассрочки не меняется */
+  var discount = discountType === 'pct' ? Math.round(base * discVal / 100)
+               : discountType === 'ppm' ? Math.round(area * discVal)
+               : Math.round(discVal);
   discount = Math.min(Math.max(discount, 0), base);
   var total = base - discount;
+  var ppm = (discountType === 'ppm' && discVal > 0) ? discVal : 0;       // скидка с м², $
+  var priceNet = ppm ? Math.max(price - ppm, 0) : price;                  // цена м² после скидки
 
   var res = EcoCalc.build({
     total: total,
@@ -609,6 +627,7 @@ function compute() {
   return {
     valid: area > 0 && price > 0,
     area: area, price: price, base: base, discount: discount, total: total,
+    ppm: ppm, priceNet: priceNet,
     calcMode: calcMode,
     down: res.startSum,
     downPct: total > 0 ? res.startSum / total * 100 : 0,
@@ -698,6 +717,8 @@ function render() {
           : 'Выберите квартиру: подъезд → этаж → №.') + '</span>';
   } else if (c.discount > 0) {
     $('priceView').innerHTML =
+      (c.ppm ? 'Цена м²: <span class="old">' + fmtMoney(c.price) + '</span> → <b>' + fmtMoney(c.priceNet) + '</b>' +
+               ' <span class="hint">(−' + fmtMoney(c.ppm) + ' с м²)</span><br>' : '') +
       '<span class="old">' + fmtMoney(c.base) + '</span> → <span class="new">' + fmtMoney(c.total) + '</span>' +
       '<br><span class="save">Выгода: ' + fmtMoney(c.discount) + '</span>';
   } else {
@@ -882,6 +903,16 @@ function planPageHtml(unit) {
     '</div>';
 }
 
+/* Строка цены м² для КП: при скидке с метра — зачёркнутая старая цена и новая,
+   это главный аргумент переговоров («было 1500 — вам 1400»). */
+function priceLineHtml(cur) {
+  if (cur.ppm) {
+    return '<span class="old">' + fmtMoney(cur.price) + '</span> → <b>' + fmtMoney(cur.priceNet) + '</b> за м²' +
+      ' <span class="save">(скидка ' + fmtMoney(cur.ppm) + ' с м²)</span>';
+  }
+  return fmtMoney(cur.price) + ' за м²';
+}
+
 function buildKP() {
   var cur = compute();
   var variants = pinned.length ? pinned : [cur];
@@ -904,10 +935,10 @@ function buildKP() {
   if (unit) {
     h += 'Квартира <b>№ ' + unit.num + '</b> · подъезд ' + unit.entrance +
       ' · этаж ' + unit.floor + ' · ' + unit.rooms + '-комн · площадь <b>' +
-      cur.area.toLocaleString('ru-RU') + ' м²</b> · цена ' + fmtMoney(cur.price) + ' за м²<br>';
+      cur.area.toLocaleString('ru-RU') + ' м²</b> · цена ' + priceLineHtml(cur) + '<br>';
   } else {
     h += 'Квартира площадью <b>' + cur.area.toLocaleString('ru-RU') + ' м²</b> · цена ' +
-      fmtMoney(cur.price) + ' за м²<br>';
+      priceLineHtml(cur) + '<br>';
   }
   if (cur.discount > 0) {
     h += '<span class="old">' + fmtMoney(cur.base) + '</span> → <span class="new">' + fmtMoney(cur.total) + '</span>' +
@@ -1009,7 +1040,7 @@ function uniqSorted(arr) {
 
 function buildEntrances() {
   var ents = uniqSorted(APT.apartments.map(function (o) { return o.entrance; }));
-  fillSelect($('selEntrance'), ents.map(function (e) { return { v: e, t: 'Подъезд ' + e }; }), 'подъезд');
+  fillSelect($('selEntrance'), ents.map(function (e) { return { v: e, t: 'Подъезд ' + e }; }), 'выбрать');
   fillSelect($('selFloor'), [], 'этаж');
   fillSelect($('selUnit'), [], 'квартира');
   applyUnit(null);
@@ -1104,16 +1135,16 @@ function setTailMode(m) {
 ['area', 'price', 'discount', 'term', 'mPay', 'anchorDate'].forEach(function (id) {
   $(id).oninput = recalc;
 });
-$('discPct').onclick = function () {
-  discountType = 'pct';
-  this.classList.add('on'); $('discUsd').classList.remove('on');
+function setDiscType(t) {
+  discountType = t;
+  ['discPct', 'discUsd', 'discPpm'].forEach(function (id) { $(id).classList.remove('on'); });
+  $({ pct: 'discPct', usd: 'discUsd', ppm: 'discPpm' }[t]).classList.add('on');
+  $('discount').step = t === 'pct' ? '0.01' : '1';
   recalc();
-};
-$('discUsd').onclick = function () {
-  discountType = 'usd';
-  this.classList.add('on'); $('discPct').classList.remove('on');
-  recalc();
-};
+}
+$('discPct').onclick = function () { setDiscType('pct'); };
+$('discUsd').onclick = function () { setDiscType('usd'); };
+$('discPpm').onclick = function () { setDiscType('ppm'); };
 $('cmTerm').onclick = function () { setCalcMode('term'); };
 $('cmPay').onclick = function () { setCalcMode('payment'); };
 $('modeEqual').onclick = function () {
@@ -1157,7 +1188,11 @@ function waSummary() {
   } else {
     L.push('Квартира ' + fmtArea(cur.area) + ' м²');
   }
-  L.push('Цена: ' + fmtMoney(cur.price) + ' за м²');
+  if (cur.ppm) {
+    L.push('Цена: ~' + fmtMoney(cur.price) + '~ → *' + fmtMoney(cur.priceNet) + '* за м² (скидка ' + fmtMoney(cur.ppm) + ' с м²)');
+  } else {
+    L.push('Цена: ' + fmtMoney(cur.price) + ' за м²');
+  }
   if (cur.discount > 0) {
     L.push('Стоимость: ' + fmtMoney(cur.base) + ' → *' + fmtMoney(cur.total) + '* (выгода ' + fmtMoney(cur.discount) + ')');
   } else {
@@ -1187,7 +1222,7 @@ $('waShare').onclick = function () {
    коммитом): index.html и кэш приезжают на телефон одним пакетом, поэтому
    цифра в шапке всегда показывает фактически установленную версию —
    сразу видно, подтянул ли телефон обновление. */
-var APP_VERSION = 11;
+var APP_VERSION = 12;
 $('verBadge').textContent = ' · версия ' + APP_VERSION;
 
 $('mEstimate').onclick = function () { setMode('estimate'); };
